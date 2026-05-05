@@ -1,0 +1,27 @@
+{
+  "name": "inomedia",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-node": "^5.2.11",
+    "@sveltejs/kit": "^2.16.0",
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "prisma": "^6.7.0",
+    "svelte": "^5.28.0",
+    "svelte-check": "^4.1.5",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.3"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.7.0",
+    "better-auth": "^1.2.7",
+    "zod": "^3.24.3"
+  }
+}
