@@ -157,10 +157,25 @@ model Client {
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
+  contacts          ClientContact[]
   projects          Project[]
 
   @@unique([companyId, legalName])
   @@map("client")
+}
+
+model ClientContact {
+  id         String   @id @default(cuid())
+  clientId   String
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name       String
+  email      String?
+  phone      String?
+  roleTitle  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("client_contact")
 }
 
 model Project {
