@@ -10,24 +10,25 @@ datasource db {
 // ─── better-auth required tables ───────────────────────────────────────────
 
 model User {
-  id            String   @id @default(cuid())
-  name          String
-  email         String   @unique
-  emailVerified Boolean  @default(false)
-  image         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id              String   @id @default(cuid())
+  name            String
+  email           String   @unique
+  emailVerified   Boolean  @default(false)
+  image           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   // Domain fields
-  firstName     String   @default("")
-  lastName      String   @default("")
-  role          UserRole @default(employee)
-  status        UserStatus @default(active)
-  deactivatedAt DateTime?
+  firstName       String   @default("")
+  lastName        String   @default("")
+  role            UserRole @default(employee)
+  status          UserStatus @default(active)
+  deactivatedAt   DateTime?
 
-  sessions      Session[]
-  accounts      Account[]
-  auditEvents   AuditEvent[] @relation("AuditActor")
+  sessions        Session[]
+  accounts        Account[]
+  auditEvents     AuditEvent[] @relation("AuditActor")
+  managedProjects Project[]    @relation("ProjectPrimaryManager")
 
   @@map("user")
 }
@@ -79,19 +80,23 @@ model Verification {
 // ─── Domain tables ─────────────────────────────────────────────────────────
 
 model Company {
-  id                      String   @id @default(cuid())
-  legalName               String
-  eikBulstat              String   @unique
-  vatNumber               String?
-  registeredAddress       String
-  molName                 String
-  defaultPaymentTermDays  Int      @default(30)
-  vatRegistered           Boolean  @default(true)
-  currency                String   @default("EUR")
-  timezone                String   @default("Europe/Sofia")
-  invoiceNextNumber       Int      @default(1)
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  id                     String            @id @default(cuid())
+  legalName              String
+  eikBulstat             String            @unique
+  vatNumber              String?
+  registeredAddress      String
+  molName                String
+  defaultPaymentTermDays Int               @default(30)
+  vatRegistered          Boolean           @default(true)
+  vatRateBasisPoints     Int               @default(2000)
+  currency               String            @default("EUR")
+  timezone               String            @default("Europe/Sofia")
+  invoiceNextNumber      Int               @default(1)
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+
+  clients                Client[]
+  expenseCategories      ExpenseCategory[]
 }
 
 model AuditEvent {
@@ -123,4 +128,67 @@ enum UserRole {
 enum UserStatus {
   active
   inactive
+}
+
+enum ClientStatus {
+  active
+  inactive
+}
+
+enum ProjectStatus {
+  active
+  on_hold
+  completed
+  cancelled
+}
+
+model Client {
+  id                String       @id @default(cuid())
+  companyId         String
+  company           Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  legalName         String
+  registrationNumber String?
+  vatNumber         String?
+  billingAddress    String?
+  defaultPaymentTermDays Int?
+  isInternal        Boolean      @default(false)
+  isProtectedSystem Boolean      @default(false)
+  status            ClientStatus @default(active)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  projects          Project[]
+
+  @@unique([companyId, legalName])
+  @@map("client")
+}
+
+model Project {
+  id                   String        @id @default(cuid())
+  clientId             String
+  client               Client        @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  name                 String
+  description          String?
+  status               ProjectStatus @default(active)
+  primaryManagerUserId String?
+  primaryManager       User?         @relation("ProjectPrimaryManager", fields: [primaryManagerUserId], references: [id], onDelete: SetNull)
+  isBillable           Boolean       @default(true)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  @@unique([clientId, name])
+  @@map("project")
+}
+
+model ExpenseCategory {
+  id         String   @id @default(cuid())
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name       String
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([companyId, name])
+  @@map("expense_category")
 }

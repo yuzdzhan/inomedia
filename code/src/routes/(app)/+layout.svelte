@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import type { Snippet } from 'svelte';
 	import type { LayoutData } from './$types';
 
@@ -17,9 +18,10 @@
 		<div class="brand">Иномедия</div>
 
 		<ul class="nav-list">
-			<li><a href="/dashboard">Начало</a></li>
+			<li><a href="/dashboard" aria-current={page.url.pathname === '/dashboard' ? 'page' : undefined}>Начало</a></li>
 			{#if data.user.role === 'admin'}
-				<li><a href="/users">Потребители</a></li>
+				<li><a href="/settings" aria-current={page.url.pathname === '/settings' ? 'page' : undefined}>Настройки</a></li>
+				<li><a href="/users" aria-current={page.url.pathname === '/users' ? 'page' : undefined}>Потребители</a></li>
 			{/if}
 		</ul>
 

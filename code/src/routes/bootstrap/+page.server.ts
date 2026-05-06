@@ -2,6 +2,7 @@ import { redirect, fail } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { auth } from '$lib/server/auth';
 import { logAuditEvent } from '$lib/server/audit';
+import { ensureCompanyDefaults } from '$lib/server/company-defaults';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -55,6 +56,8 @@ export const actions: Actions = {
 				molName: d.molName
 			}
 		});
+
+		await ensureCompanyDefaults(db, company.id);
 
 		// Create initial admin via better-auth
 		const signUpResponse = await auth.api.signUpEmail({

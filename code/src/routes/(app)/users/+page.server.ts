@@ -33,9 +33,7 @@ const createUserSchema = z.object({
 	lastName: z.string().min(1, 'Въведете фамилно име'),
 	email: z.string().email('Невалиден имейл адрес'),
 	password: z.string().min(8, 'Паролата трябва да е поне 8 символа'),
-	role: z.enum(['admin', 'manager', 'employee', 'accountant'], {
-		errorMap: () => ({ message: 'Изберете роля' })
-	})
+	role: z.enum(['admin', 'manager', 'employee', 'accountant'], { message: 'Изберете роля' })
 });
 
 export const actions: Actions = {
