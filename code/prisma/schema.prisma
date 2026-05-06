@@ -29,6 +29,7 @@ model User {
   accounts        Account[]
   auditEvents     AuditEvent[] @relation("AuditActor")
   managedProjects Project[]    @relation("ProjectPrimaryManager")
+  projectMemberships ProjectMember[]
 
   @@map("user")
 }
@@ -185,14 +186,29 @@ model Project {
   name                 String
   description          String?
   status               ProjectStatus @default(active)
-  primaryManagerUserId String?
-  primaryManager       User?         @relation("ProjectPrimaryManager", fields: [primaryManagerUserId], references: [id], onDelete: SetNull)
+  primaryManagerUserId String
+  primaryManager       User          @relation("ProjectPrimaryManager", fields: [primaryManagerUserId], references: [id], onDelete: Restrict)
+  budgetAmountCents    Int?
+  retainerAmountCents  Int?
   isBillable           Boolean       @default(true)
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
+  members              ProjectMember[]
 
   @@unique([clientId, name])
   @@map("project")
+}
+
+model ProjectMember {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([projectId, userId])
+  @@map("project_member")
 }
 
 model ExpenseCategory {
