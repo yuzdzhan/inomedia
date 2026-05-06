@@ -15,8 +15,17 @@
 	function fieldError(field: string) {
 		return (form as any)?.createErrors?.[field]?.[0];
 	}
+
 	function val(field: string) {
 		return (form as any)?.createValues?.[field] ?? '';
+	}
+
+	function selectedRole(userId: string, currentRole: string) {
+		return (form as any)?.roleUserId === userId ? ((form as any)?.roleValue ?? currentRole) : currentRole;
+	}
+
+	function roleError(userId: string) {
+		return (form as any)?.roleUserId === userId ? (form as any)?.roleError : null;
 	}
 
 	$effect(() => {
@@ -102,12 +111,20 @@
 					<td>
 						<form method="POST" action="?/setRole" class="inline-form">
 							<input type="hidden" name="userId" value={u.id} />
-							<select name="role" onchange="this.form.requestSubmit()">
+							<select
+								name="role"
+								value={selectedRole(u.id, u.role)}
+								aria-invalid={roleError(u.id) ? 'true' : undefined}
+								onchange={(event) => event.currentTarget.form?.requestSubmit()}
+							>
 								{#each Object.entries(roleLabels) as [v, label]}
-									<option value={v} selected={u.role === v}>{label}</option>
+									<option value={v}>{label}</option>
 								{/each}
 							</select>
 						</form>
+						{#if roleError(u.id)}
+							<div class="error">{roleError(u.id)}</div>
+						{/if}
 					</td>
 					<td>
 						<span class="badge" class:active={u.status === 'active'} class:disabled={u.status === 'inactive'}>

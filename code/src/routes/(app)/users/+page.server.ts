@@ -29,8 +29,8 @@ export const load: PageServerLoad = async ({ parent }) => {
 };
 
 const createUserSchema = z.object({
-	firstName: z.string().min(1, 'Въведете собствено ime'),
-	lastName: z.string().min(1, 'Въведете фамилно ime'),
+	firstName: z.string().min(1, 'Въведете собствено име'),
+	lastName: z.string().min(1, 'Въведете фамилно име'),
 	email: z.string().email('Невалиден имейл адрес'),
 	password: z.string().min(8, 'Паролата трябва да е поне 8 символа'),
 	role: z.enum(['admin', 'manager', 'employee', 'accountant'], {
@@ -40,7 +40,9 @@ const createUserSchema = z.object({
 
 export const actions: Actions = {
 	create: async ({ request, locals }) => {
-		if (locals.user?.role !== 'admin') return fail(403, { createError: 'Нямате права.' });
+		if (locals.user?.role !== 'admin') {
+			return fail(403, { createError: 'Нямате права.' });
+		}
 
 		const formData = await request.formData();
 		const raw = Object.fromEntries(formData);
@@ -85,21 +87,33 @@ export const actions: Actions = {
 	},
 
 	setRole: async ({ request, locals }) => {
-		if (locals.user?.role !== 'admin') return fail(403, {});
+		if (locals.user?.role !== 'admin') {
+			return fail(403, { roleError: 'Невалидна роля.', roleUserId: '', roleValue: '' });
+		}
 
 		const formData = await request.formData();
 		const targetId = String(formData.get('userId') ?? '');
 		const newRole = String(formData.get('role') ?? '');
 
 		if (!['admin', 'manager', 'employee', 'accountant'].includes(newRole)) {
-			return fail(422, { roleError: 'Невалидна роля.' });
+			return fail(422, { roleError: 'Невалидна роля.', roleUserId: targetId, roleValue: newRole });
 		}
 		if (targetId === locals.user.id && newRole !== 'admin') {
-			return fail(400, { roleError: 'Не можете да промените собствената си роля.' });
+			return fail(400, {
+				roleError: 'Не можете да промените собствената си роля.',
+				roleUserId: targetId,
+				roleValue: newRole
+			});
 		}
 
 		const target = await db.user.findUnique({ where: { id: targetId } });
-		if (!target) return fail(404, {});
+		if (!target) {
+			return fail(404, {
+				roleError: 'Невалидна роля.',
+				roleUserId: targetId,
+				roleValue: newRole
+			});
+		}
 
 		await db.user.update({
 			where: { id: targetId },
@@ -115,7 +129,7 @@ export const actions: Actions = {
 			newValueJson: { role: newRole }
 		});
 
-		return { roleSuccess: true };
+		return { roleSuccess: true, roleUserId: targetId, roleValue: newRole };
 	},
 
 	setStatus: async ({ request, locals }) => {
@@ -143,7 +157,6 @@ export const actions: Actions = {
 			}
 		});
 
-		// Invalidate all sessions for the deactivated user
 		if (newStatus === 'inactive') {
 			await db.session.deleteMany({ where: { userId: targetId } });
 		}

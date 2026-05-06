@@ -6,12 +6,8 @@ import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals, url }) => {
 	const company = await db.company.findFirst();
-	if (!company) {
-		redirect(302, '/bootstrap');
-	}
-	if (locals.user) {
-		redirect(302, '/dashboard');
-	}
+	if (!company) redirect(302, '/bootstrap');
+	if (locals.user) redirect(302, '/dashboard');
 	return { bootstrapped: url.searchParams.get('bootstrapped') === '1' };
 };
 
@@ -27,14 +23,16 @@ export const actions: Actions = {
 			return fail(422, { error: 'Въведете имейл и парола.', email });
 		}
 
-		// Look up user first so we can log the event with their ID
 		const dbUser = await db.user.findUnique({ where: { email } });
 
-		const signInResponse = await auth.api
+		const authResult = await auth.api
 			.signInEmail({ body: { email, password }, headers: request.headers })
-			.catch(() => null);
+			.catch((e: unknown) => {
+				console.error('[login] signInEmail threw:', e);
+				return null;
+			});
 
-		if (!signInResponse?.user) {
+		if (!authResult?.user) {
 			await logAuditEvent({
 				actorUserId: dbUser?.id,
 				eventType: 'login_failed',
@@ -47,8 +45,8 @@ export const actions: Actions = {
 			return fail(401, { error: 'Невалиден имейл или парола.', email });
 		}
 
-		// Inactive users are blocked
 		if (dbUser?.status === 'inactive') {
+			await db.session.deleteMany({ where: { userId: dbUser.id } });
 			await logAuditEvent({
 				actorUserId: dbUser.id,
 				eventType: 'login_blocked',
@@ -58,22 +56,18 @@ export const actions: Actions = {
 				ipAddress: ip,
 				userAgent: ua
 			});
-			// Sign them out immediately
-			await auth.api.signOut({ headers: request.headers }).catch(() => null);
-			return fail(403, { error: 'Акаунтът е деактивиран.', email });
+			return fail(403, { error: 'Акаунтът е деактивиран', email });
 		}
 
 		await logAuditEvent({
-			actorUserId: signInResponse.user.id,
+			actorUserId: authResult.user.id,
 			eventType: 'login_success',
 			entityType: 'user',
-			entityId: signInResponse.user.id,
+			entityId: authResult.user.id,
 			ipAddress: ip,
 			userAgent: ua
 		});
 
-		// better-auth sets the session cookie in the response headers via the handler;
-		// we redirect and the cookie is already sent.
 		redirect(302, '/dashboard');
 	}
 };

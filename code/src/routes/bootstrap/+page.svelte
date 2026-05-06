@@ -102,7 +102,7 @@
 
 				<div class="row">
 					<div class="field">
-						<label for="firstName">Собствено ime *</label>
+						<label for="firstName">Собствено име *</label>
 						<input
 							id="firstName"
 							name="firstName"
@@ -114,7 +114,7 @@
 					</div>
 
 					<div class="field">
-						<label for="lastName">Фамилно ime *</label>
+						<label for="lastName">Фамилно име *</label>
 						<input
 							id="lastName"
 							name="lastName"
