@@ -34,6 +34,7 @@
 			{/if}
 			{#if ['admin', 'accountant', 'manager'].includes(data.user.role)}
 				<li><a href="/reports/billing" aria-current={page.url.pathname.startsWith('/reports/billing') ? 'page' : undefined}>Отчети: Фактуриране</a></li>
+				<li><a href="/reports/expenses" aria-current={page.url.pathname.startsWith('/reports/expenses') ? 'page' : undefined}>Разходи и прогноза</a></li>
 			{/if}
 			{#if data.user.role === 'admin'}
 				<li><a href="/settings" aria-current={page.url.pathname === '/settings' ? 'page' : undefined}>Настройки</a></li>
