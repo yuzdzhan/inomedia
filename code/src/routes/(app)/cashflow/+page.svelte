@@ -412,7 +412,7 @@
 	<h2>Движения</h2>
 
 	<form method="GET" class="filter-bar">
-		<select name="containerId" onchange="this.form.submit()">
+		<select name="containerId" onchange={() => (document.activeElement as HTMLSelectElement)?.form?.submit()}>
 			<option value="" selected={!data.filters.containerId}>Всички сметки</option>
 			{#if data.bank}
 				<option value={data.bank.id} selected={data.filters.containerId === data.bank.id}>Банка</option>
@@ -422,7 +422,7 @@
 			{/if}
 		</select>
 
-		<select name="entryType" onchange="this.form.submit()">
+		<select name="entryType" onchange={() => (document.activeElement as HTMLSelectElement)?.form?.submit()}>
 			<option value="" selected={!data.filters.entryType}>Всички типове</option>
 			{#each Object.entries(entryTypeLabels) as [value, label]}
 				<option value={value} selected={data.filters.entryType === value}>{label}</option>

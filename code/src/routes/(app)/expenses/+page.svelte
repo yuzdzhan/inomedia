@@ -234,13 +234,13 @@
 	{/if}
 
 	<form method="GET" class="filter-bar">
-		<select name="status" onchange="this.form.submit()">
+		<select name="status" onchange={() => (document.activeElement as HTMLSelectElement)?.form?.submit()}>
 			<option value="" selected={!data.filters.status}>Всички статуси</option>
 			<option value="unpaid" selected={data.filters.status === 'unpaid'}>Неплатен</option>
 			<option value="paid" selected={data.filters.status === 'paid'}>Платен</option>
 		</select>
 
-		<select name="categoryId" onchange="this.form.submit()">
+		<select name="categoryId" onchange={() => (document.activeElement as HTMLSelectElement)?.form?.submit()}>
 			<option value="" selected={!data.filters.categoryId}>Всички категории</option>
 			{#each data.categories as cat}
 				<option value={cat.id} selected={data.filters.categoryId === cat.id}>{cat.name}</option>
@@ -248,7 +248,7 @@
 		</select>
 
 		{#if !data.permissions.isManager}
-			<select name="clientId" onchange="this.form.submit()">
+			<select name="clientId" onchange={() => (document.activeElement as HTMLSelectElement)?.form?.submit()}>
 				<option value="" selected={!data.filters.clientId}>Всички клиенти</option>
 				{#each data.clients as client}
 					<option value={client.id} selected={data.filters.clientId === client.id}>{client.legalName}</option>
@@ -256,7 +256,7 @@
 			</select>
 		{/if}
 
-		<select name="projectId" onchange="this.form.submit()">
+		<select name="projectId" onchange={() => (document.activeElement as HTMLSelectElement)?.form?.submit()}>
 			<option value="" selected={!data.filters.projectId}>Всички проекти</option>
 			{#each data.allVisibleProjects as project}
 				<option value={project.id} selected={data.filters.projectId === project.id}>

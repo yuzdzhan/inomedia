@@ -230,7 +230,7 @@
 	<h2 class="section-title">Издадени фактури</h2>
 
 	<form method="GET" class="filter-bar">
-		<select name="status" onchange="this.form.submit()">
+		<select name="status" onchange={() => (document.activeElement as HTMLSelectElement)?.form?.submit()}>
 			<option value="" selected={!data.filters.status}>Всички статуси</option>
 			<option value="issued" selected={data.filters.status === 'issued'}>Издадена</option>
 			<option value="partially_paid" selected={data.filters.status === 'partially_paid'}>Частично платена</option>
@@ -239,7 +239,7 @@
 			<option value="voided" selected={data.filters.status === 'voided'}>Анулирана</option>
 		</select>
 
-		<select name="clientId" onchange="this.form.submit()">
+		<select name="clientId" onchange={() => (document.activeElement as HTMLSelectElement)?.form?.submit()}>
 			<option value="" selected={!data.filters.clientId}>Всички клиенти</option>
 			{#each data.clients as client}
 				<option value={client.id} selected={data.filters.clientId === client.id}>{client.legalName}</option>
