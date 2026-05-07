@@ -64,6 +64,40 @@
 			: fallback;
 	}
 
+	function projectRateFieldError(projectId: string, field: string) {
+		return (form as any)?.projectRateOverrideProjectId === projectId
+			? (form as any)?.projectRateOverrideErrors?.[field]?.[0]
+			: null;
+	}
+
+	function projectRateFieldValue(projectId: string, field: string, fallback = '') {
+		if ((form as any)?.projectRateOverrideProjectId === projectId) {
+			return (form as any)?.projectRateOverrideValues?.[field] ?? fallback;
+		}
+
+		return field === 'effectiveFrom' ? new Date().toISOString().slice(0, 10) : fallback;
+	}
+
+	function canViewProjectRates(project: { primaryManagerUserId: string }) {
+		if (data.permissions.currentUserRole === 'admin' || data.permissions.currentUserRole === 'accountant') {
+			return true;
+		}
+
+		return (
+			data.permissions.currentUserRole === 'manager' &&
+			project.primaryManagerUserId === data.permissions.currentUserId
+		);
+	}
+
+	function formatDate(value: string | Date) {
+		return new Intl.DateTimeFormat('bg-BG', {
+			day: '2-digit',
+			month: 'short',
+			year: 'numeric',
+			timeZone: 'UTC'
+		}).format(new Date(value));
+	}
+
 	function toggleProject(projectId: string) {
 		activeProjectId = activeProjectId === projectId ? null : projectId;
 	}
@@ -126,6 +160,14 @@
 
 {#if (form as any)?.projectFormSuccess}
 	<div class="alert success">Проектът е обновен.</div>
+{/if}
+
+{#if (form as any)?.projectRateOverrideError}
+	<div class="alert error">{(form as any).projectRateOverrideError}</div>
+{/if}
+
+{#if (form as any)?.projectRateOverrideSuccess}
+	<div class="alert success">Историята на билируемата ставка е добавена.</div>
 {/if}
 
 {#if showCreateForm && data.permissions.canManageProjects}
@@ -409,6 +451,59 @@
 						</div>
 					{/if}
 
+					{#if canViewProjectRates(project)}
+						<div class="rate-history-panel">
+							<div class="members-title">История на проектни билируеми ставки</div>
+							<div class="rate-override-form">
+								<input type="hidden" name="projectId" value={project.id} />
+								<div class="rate-override-grid">
+									<select name="userId" aria-label="Участник">
+										<option value="">Изберете участник</option>
+										{#each project.members as member}
+											<option value={member.userId} selected={projectRateFieldValue(project.id, 'userId') === member.userId}>
+												{userLabel(member.user)}
+											</option>
+										{/each}
+									</select>
+									<input
+										name="effectiveFrom"
+										type="date"
+										value={projectRateFieldValue(project.id, 'effectiveFrom')}
+										aria-label="В сила от"
+									/>
+									<input
+										name="billableRate"
+										type="text"
+										inputmode="decimal"
+										placeholder={`Ставка (${data.company.currency})`}
+										value={projectRateFieldValue(project.id, 'billableRate')}
+										aria-label="Билируема ставка"
+									/>
+									<button type="submit" class="btn-primary" formaction="?/addProjectMemberRateOverride" formmethod="POST">
+										Добави
+									</button>
+								</div>
+								{#if projectRateFieldError(project.id, 'userId')}<span class="error-text">{projectRateFieldError(project.id, 'userId')}</span>{/if}
+								{#if projectRateFieldError(project.id, 'effectiveFrom')}<span class="error-text">{projectRateFieldError(project.id, 'effectiveFrom')}</span>{/if}
+								{#if projectRateFieldError(project.id, 'billableRate')}<span class="error-text">{projectRateFieldError(project.id, 'billableRate')}</span>{/if}
+							</div>
+
+							<div class="rate-history-list">
+								{#if project.memberBillableRateOverrides.length === 0}
+									<p class="hint">Все още няма проектни ставки по участници.</p>
+								{:else}
+									{#each project.memberBillableRateOverrides as override}
+										<div class="rate-history-entry">
+											<strong>{userLabel(override.user)}</strong>
+											<span>В сила от {formatDate(override.effectiveFrom)}</span>
+											<span>{formatMoney(override.billableRateCents)}</span>
+										</div>
+									{/each}
+								{/if}
+							</div>
+						</div>
+					{/if}
+
 					{#if data.permissions.canManageProjects}
 						<div class="action-row">
 							<button type="submit" class="btn-primary">Запази проекта</button>
@@ -658,6 +753,38 @@
 		background: #fff;
 	}
 
+	.rate-history-panel {
+		display: grid;
+		gap: 14px;
+		border: 1px solid #e2e8f0;
+		border-radius: 10px;
+		padding: 16px;
+		background: #fff;
+	}
+
+	.rate-override-form,
+	.rate-history-list {
+		display: grid;
+		gap: 10px;
+	}
+
+	.rate-override-grid {
+		display: grid;
+		grid-template-columns: 1.2fr 1fr 1fr auto;
+		gap: 10px;
+		align-items: center;
+	}
+
+	.rate-history-entry {
+		display: grid;
+		gap: 2px;
+		padding: 12px;
+		border: 1px solid #e2e8f0;
+		border-radius: 10px;
+		background: #f8fafc;
+		font-size: 0.88rem;
+	}
+
 	.chips {
 		display: flex;
 		flex-wrap: wrap;
@@ -773,6 +900,10 @@
 		.members-grid {
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
+
+		.rate-override-grid {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
 	}
 
 	@media (max-width: 900px) {
@@ -784,7 +915,8 @@
 
 		.grid.two,
 		.project-meta,
-		.members-grid {
+		.members-grid,
+		.rate-override-grid {
 			grid-template-columns: 1fr;
 		}
 

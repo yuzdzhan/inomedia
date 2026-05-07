@@ -31,6 +31,13 @@ const projectSchema = z.object({
 	memberUserIds: z.array(z.string().trim()).default([])
 });
 
+const projectMemberRateOverrideSchema = z.object({
+	projectId: z.string().trim().min(1),
+	userId: z.string().trim().min(1),
+	effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Използвайте валидна дата.'),
+	billableRate: moneyField
+});
+
 function parseCheckbox(formData: FormData, key: string) {
 	return formData.get(key) === 'on';
 }
@@ -67,6 +74,25 @@ function normalizeProjectPayload(data: z.infer<typeof projectSchema>) {
 		isBillable: data.isBillable,
 		memberUserIds
 	};
+}
+
+function normalizeProjectMemberRateOverridePayload(
+	data: z.infer<typeof projectMemberRateOverrideSchema>
+) {
+	return {
+		projectId: data.projectId,
+		userId: data.userId,
+		effectiveFrom: new Date(`${data.effectiveFrom}T00:00:00.000Z`),
+		billableRateCents: parseOptionalMoneyToCents(data.billableRate)
+	};
+}
+
+function canViewProjectRateData(user: { id: string; role: string }, project: { primaryManagerUserId: string }) {
+	if (user.role === 'admin' || user.role === 'accountant') {
+		return true;
+	}
+
+	return user.role === 'manager' && project.primaryManagerUserId === user.id;
 }
 
 async function getCompanyOrRedirect() {
@@ -201,6 +227,18 @@ export const load: PageServerLoad = async ({ parent }) => {
 							}
 						}
 					}
+				},
+				memberBillableRateOverrides: {
+					orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+					include: {
+						user: {
+							select: {
+								id: true,
+								firstName: true,
+								lastName: true
+							}
+						}
+					}
 				}
 			}
 		})
@@ -213,7 +251,9 @@ export const load: PageServerLoad = async ({ parent }) => {
 		projects,
 		permissions: {
 			canManageProjects,
-			canViewFinancials: canViewProjectFinancials(user.role)
+			canViewFinancials: canViewProjectFinancials(user.role),
+			currentUserId: user.id,
+			currentUserRole: user.role
 		}
 	};
 };
@@ -315,6 +355,114 @@ export const actions: Actions = {
 		});
 
 		return { createProjectSuccess: true };
+	},
+
+	addProjectMemberRateOverride: async ({ request, locals, getClientAddress }) => {
+		if (!locals.user || !canCreateOrManageProjects(locals.user.role)) {
+			return fail(403, {
+				projectRateOverrideError: 'Нямате права за тази операция.',
+				projectRateOverrideProjectId: ''
+			});
+		}
+
+		const company = await getCompanyOrRedirect();
+		const formData = await request.formData();
+		const raw = {
+			projectId: String(formData.get('projectId') ?? ''),
+			userId: String(formData.get('userId') ?? ''),
+			effectiveFrom: String(formData.get('effectiveFrom') ?? ''),
+			billableRate: String(formData.get('billableRate') ?? '')
+		};
+		const parsed = projectMemberRateOverrideSchema.safeParse(raw);
+
+		if (!parsed.success) {
+			return fail(422, {
+				projectRateOverrideErrors: parsed.error.flatten().fieldErrors,
+				projectRateOverrideProjectId: raw.projectId,
+				projectRateOverrideValues: raw
+			});
+		}
+
+		const project = await db.project.findFirst({
+			where: {
+				id: parsed.data.projectId,
+				client: {
+					companyId: company.id
+				}
+			},
+			include: {
+				members: {
+					select: {
+						userId: true
+					}
+				}
+			}
+		});
+
+		if (!project) {
+			return fail(404, {
+				projectRateOverrideError: 'Проектът не е намерен.',
+				projectRateOverrideProjectId: raw.projectId
+			});
+		}
+
+		if (!canViewProjectRateData(locals.user, project)) {
+			return fail(403, {
+				projectRateOverrideError: 'Нямате достъп до ставките за този проект.',
+				projectRateOverrideProjectId: project.id
+			});
+		}
+
+		if (!project.members.some((member) => member.userId === parsed.data.userId)) {
+			return fail(422, {
+				projectRateOverrideErrors: { userId: ['Изберете участник от екипа на проекта.'] },
+				projectRateOverrideProjectId: project.id,
+				projectRateOverrideValues: raw
+			});
+		}
+
+		const normalized = normalizeProjectMemberRateOverridePayload(parsed.data);
+		if (
+			Number.isNaN(normalized.effectiveFrom.getTime()) ||
+			normalized.billableRateCents == null ||
+			Number.isNaN(normalized.billableRateCents) ||
+			normalized.billableRateCents <= 0
+		) {
+			return fail(422, {
+				projectRateOverrideErrors: { billableRate: ['Използвайте валидна положителна ставка.'] },
+				projectRateOverrideProjectId: project.id,
+				projectRateOverrideValues: raw
+			});
+		}
+
+		const override = await db.projectMemberBillableRateOverride.create({
+			data: {
+				projectId: project.id,
+				userId: normalized.userId,
+				effectiveFrom: normalized.effectiveFrom,
+				billableRateCents: normalized.billableRateCents
+			}
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'project_member_billable_rate_override_created',
+			entityType: 'project',
+			entityId: project.id,
+			newValueJson: {
+				projectMemberBillableRateOverrideId: override.id,
+				userId: override.userId,
+				effectiveFrom: parsed.data.effectiveFrom,
+				billableRateCents: override.billableRateCents
+			},
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return {
+			projectRateOverrideSuccess: true,
+			projectRateOverrideProjectId: project.id
+		};
 	},
 
 	updateProject: async ({ request, locals, getClientAddress }) => {

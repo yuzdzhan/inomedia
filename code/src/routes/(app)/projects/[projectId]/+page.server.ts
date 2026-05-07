@@ -4,6 +4,7 @@ import type { TaskBillingType, TaskPriority, TaskStatus } from '@prisma/client';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
 import { ensureCompanyDefaults } from '$lib/server/company-defaults';
+import { resolveRatesForTimeLog } from '$lib/server/rate-resolution';
 import { prepareAttachments } from '$lib/server/task-attachments';
 import { canCreateOrManageProjects, canViewProjectFinancials } from '$lib/server/project-policy';
 import {
@@ -48,6 +49,7 @@ const taskSchema = z.object({
 	]),
 	billingType: z.enum(['hourly', 'flat_fee', 'non_billable']),
 	flatFeeAmount: moneyField,
+	billableRateOverride: moneyField,
 	assigneeUserIds: z.array(z.string().trim()).default([])
 });
 
@@ -103,6 +105,7 @@ function buildTaskInput(formData: FormData) {
 		deadlineDate: String(formData.get('deadlineDate') ?? ''),
 		billingType: String(formData.get('billingType') ?? 'hourly'),
 		flatFeeAmount: String(formData.get('flatFeeAmount') ?? ''),
+		billableRateOverride: String(formData.get('billableRateOverride') ?? ''),
 		assigneeUserIds: formData.getAll('assigneeUserIds').map(String)
 	};
 }
@@ -151,6 +154,7 @@ function normalizeTaskPayload(data: z.infer<typeof taskSchema>) {
 		deadlineDate: parseOptionalDateInput(data.deadlineDate),
 		billingType: data.billingType,
 		flatFeeAmountCents: parseOptionalMoneyToCents(data.flatFeeAmount),
+		billableRateOverrideCents: parseOptionalMoneyToCents(data.billableRateOverride),
 		assigneeUserIds: dedupeIds(data.assigneeUserIds)
 	};
 }
@@ -200,12 +204,23 @@ function normalizeTaskTimeLogPayload(data: z.infer<typeof taskTimeLogSchema>) {
 
 function normalizeTaskBillingForPersistence(input: ReturnType<typeof normalizeTaskPayload>) {
 	if (input.billingType === 'flat_fee') {
-		return input;
+		return {
+			...input,
+			billableRateOverrideCents: null
+		};
+	}
+
+	if (input.billingType === 'hourly') {
+		return {
+			...input,
+			flatFeeAmountCents: null
+		};
 	}
 
 	return {
 		...input,
-		flatFeeAmountCents: null
+		flatFeeAmountCents: null,
+		billableRateOverrideCents: null
 	};
 }
 
@@ -385,6 +400,27 @@ function validateTaskBilling(input: ReturnType<typeof normalizeTaskPayload>, isI
 		return { field: 'flatFeeAmount', message: 'Попълнете фиксирана цена само за задачи с този тип таксуване.' };
 	}
 
+	if (input.billingType === 'hourly') {
+		if (
+			input.billableRateOverrideCents != null &&
+			(Number.isNaN(input.billableRateOverrideCents) || input.billableRateOverrideCents <= 0)
+		) {
+			return {
+				field: 'billableRateOverride',
+				message: 'Използвайте валидна положителна часова ставка.'
+			};
+		}
+
+		return null;
+	}
+
+	if (input.billableRateOverrideCents != null) {
+		return {
+			field: 'billableRateOverride',
+			message: 'Въведете почасова ставка само за почасово таксуване.'
+		};
+	}
+
 	return null;
 }
 
@@ -484,6 +520,17 @@ function canUserManageProjectTimeLogs(
 	return user.role === 'admin' || (user.role === 'manager' && project.primaryManagerUserId === user.id);
 }
 
+function canUserViewProjectRateData(
+	user: { id: string; role: string },
+	project: { primaryManagerUserId: string }
+) {
+	if (user.role === 'admin' || user.role === 'accountant') {
+		return true;
+	}
+
+	return user.role === 'manager' && project.primaryManagerUserId === user.id;
+}
+
 export const load: PageServerLoad = async ({ params, parent, url }) => {
 	const { user } = await parent();
 	if (!canAccessProjectTasks(user.role)) {
@@ -537,6 +584,7 @@ export const load: PageServerLoad = async ({ params, parent, url }) => {
 			canCreateTimeLogs: canCreateTaskTimeLogs(user.role),
 			canSoftDeleteComments: canSoftDeleteTaskComments(user.role),
 			canViewFinancials: canViewProjectFinancials(user.role),
+			canViewRates: canUserViewProjectRateData(user, project),
 			isEmployeeView
 		}
 	};
@@ -684,6 +732,8 @@ export const actions: Actions = {
 					deadlineDate: data.deadlineDate,
 					billingType: data.billingType,
 					flatFeeAmountCents: data.billingType === 'flat_fee' ? data.flatFeeAmountCents : null,
+					billableRateOverrideCents:
+						data.billingType === 'hourly' ? data.billableRateOverrideCents : null,
 					createdByUserId: user.id,
 					assignees:
 						data.assigneeUserIds.length > 0
@@ -726,6 +776,7 @@ export const actions: Actions = {
 				deadlineDate: formatDateForInput(task.deadlineDate),
 				billingType: task.billingType,
 				flatFeeAmountCents: task.flatFeeAmountCents,
+				billableRateOverrideCents: task.billableRateOverrideCents,
 				assigneeUserIds: data.assigneeUserIds,
 				attachmentCount: preparedAttachments.attachments.length
 			},
@@ -842,7 +893,9 @@ export const actions: Actions = {
 					priority: data.priority,
 					deadlineDate: data.deadlineDate,
 					billingType: data.billingType,
-					flatFeeAmountCents: data.billingType === 'flat_fee' ? data.flatFeeAmountCents : null
+					flatFeeAmountCents: data.billingType === 'flat_fee' ? data.flatFeeAmountCents : null,
+					billableRateOverrideCents:
+						data.billingType === 'hourly' ? data.billableRateOverrideCents : null
 				}
 			});
 
@@ -890,6 +943,7 @@ export const actions: Actions = {
 				deadlineDate: formatDateForInput(task.deadlineDate),
 				billingType: task.billingType,
 				flatFeeAmountCents: task.flatFeeAmountCents,
+				billableRateOverrideCents: task.billableRateOverrideCents,
 				assigneeUserIds: task.assignees.map((assignee) => assignee.userId)
 			},
 			newValueJson: {
@@ -901,6 +955,7 @@ export const actions: Actions = {
 				deadlineDate: formatDateForInput(updatedTask.deadlineDate),
 				billingType: updatedTask.billingType,
 				flatFeeAmountCents: updatedTask.flatFeeAmountCents,
+				billableRateOverrideCents: updatedTask.billableRateOverrideCents,
 				assigneeUserIds: data.assigneeUserIds,
 				addedAttachmentCount: preparedAttachments.attachments.length
 			},
@@ -1223,6 +1278,13 @@ export const actions: Actions = {
 			}
 		}
 
+		const resolvedRates = await resolveRatesForTimeLog({
+			userId: user.id,
+			projectId: project.id,
+			taskId: task.id,
+			workDate
+		});
+
 		const timeLog = await db.taskTimeLog.create({
 			data: {
 				taskId: task.id,
@@ -1231,7 +1293,9 @@ export const actions: Actions = {
 				description: data.description,
 				durationMinutes: data.durationMinutes,
 				startMinuteOfDay: data.startMinuteOfDay,
-				endMinuteOfDay: data.endMinuteOfDay
+				endMinuteOfDay: data.endMinuteOfDay,
+				snapshotCostRateCents: resolvedRates.costRateCents,
+				snapshotBillableRateCents: resolvedRates.resolvedBillableRateCents
 			}
 		});
 
@@ -1245,7 +1309,9 @@ export const actions: Actions = {
 				workDate: formatDateForInput(timeLog.workDate),
 				durationMinutes: timeLog.durationMinutes,
 				startMinuteOfDay: timeLog.startMinuteOfDay,
-				endMinuteOfDay: timeLog.endMinuteOfDay
+				endMinuteOfDay: timeLog.endMinuteOfDay,
+				snapshotCostRateCents: timeLog.snapshotCostRateCents,
+				snapshotBillableRateCents: timeLog.snapshotBillableRateCents
 			},
 			ipAddress: getClientAddress(),
 			userAgent: request.headers.get('user-agent') ?? undefined

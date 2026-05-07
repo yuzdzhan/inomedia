@@ -1,10 +1,26 @@
 import { redirect, fail } from '@sveltejs/kit';
+import { z } from 'zod';
 import { db } from '$lib/server/db';
 import { auth } from '$lib/server/auth';
 import { logAuditEvent } from '$lib/server/audit';
 import { formatMoneyFromCents, parseOptionalMoneyToCents } from '$lib/server/project-policy';
-import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
+
+function formatDateInput(date: Date) {
+	return date.toISOString().slice(0, 10);
+}
+
+function normalizeRateEntry(input: {
+	effectiveFrom: string;
+	costRate: string;
+	defaultBillableRate: string;
+}) {
+	return {
+		effectiveFrom: new Date(`${input.effectiveFrom}T00:00:00.000Z`),
+		costRateCents: parseOptionalMoneyToCents(input.costRate),
+		defaultBillableRateCents: parseOptionalMoneyToCents(input.defaultBillableRate)
+	};
+}
 
 export const load: PageServerLoad = async ({ parent }) => {
 	const { user } = await parent();
@@ -29,12 +45,22 @@ export const load: PageServerLoad = async ({ parent }) => {
 				status: true,
 				hourlyRateCents: true,
 				createdAt: true,
-				deactivatedAt: true
+				deactivatedAt: true,
+				rateHistoryEntries: {
+					orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+					select: {
+						id: true,
+						effectiveFrom: true,
+						costRateCents: true,
+						billableRateCents: true,
+						createdAt: true
+					}
+				}
 			}
 		})
 	]);
 
-	return { company, users };
+	return { company, users, today: formatDateInput(new Date()) };
 };
 
 const createUserSchema = z.object({
@@ -55,6 +81,13 @@ const setHourlyRateSchema = z.object({
 	hourlyRate: moneyField
 });
 
+const rateHistoryEntrySchema = z.object({
+	userId: z.string().trim().min(1),
+	effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Използвайте валидна дата.'),
+	costRate: moneyField,
+	defaultBillableRate: moneyField
+});
+
 export const actions: Actions = {
 	create: async ({ request, locals }) => {
 		if (locals.user?.role !== 'admin') {
@@ -70,20 +103,31 @@ export const actions: Actions = {
 		}
 
 		const d = parsed.data;
-		const hourlyRate = String(formData.get('hourlyRate') ?? '');
-		const hourlyRateValidation = moneyField.safeParse(hourlyRate);
-		if (!hourlyRateValidation.success) {
+		const rateEntryRaw = {
+			effectiveFrom: String(formData.get('effectiveFrom') ?? formatDateInput(new Date())),
+			costRate: String(formData.get('costRate') ?? ''),
+			defaultBillableRate: String(formData.get('defaultBillableRate') ?? '')
+		};
+		const rateEntryValidation = rateHistoryEntrySchema.omit({ userId: true }).safeParse(rateEntryRaw);
+		if (!rateEntryValidation.success) {
 			return fail(422, {
-				createErrors: { hourlyRate: [hourlyRateValidation.error.issues[0]?.message ?? 'Невалидна стойност.'] },
-				createValues: raw
+				createErrors: rateEntryValidation.error.flatten().fieldErrors,
+				createValues: { ...raw, ...rateEntryRaw }
 			});
 		}
 
-		const hourlyRateCents = parseOptionalMoneyToCents(hourlyRateValidation.data);
-		if (Number.isNaN(hourlyRateCents)) {
+		const rateEntry = normalizeRateEntry(rateEntryValidation.data);
+		if (
+			Number.isNaN(rateEntry.effectiveFrom.getTime()) ||
+			Number.isNaN(rateEntry.costRateCents) ||
+			Number.isNaN(rateEntry.defaultBillableRateCents)
+		) {
 			return fail(422, {
-				createErrors: { hourlyRate: ['Използвайте валидна сума.'] },
-				createValues: raw
+				createErrors: {
+					costRate: ['Използвайте валидна сума.'],
+					defaultBillableRate: ['Използвайте валидна сума.']
+				},
+				createValues: { ...raw, ...rateEntryRaw }
 			});
 		}
 
@@ -91,7 +135,7 @@ export const actions: Actions = {
 		if (existing) {
 			return fail(409, {
 				createErrors: { email: ['Имейл адресът вече е регистриран.'] },
-				createValues: raw
+				createValues: { ...raw, ...rateEntryRaw }
 			});
 		}
 
@@ -105,7 +149,22 @@ export const actions: Actions = {
 
 		await db.user.update({
 			where: { id: result.user.id },
-			data: { role: d.role, firstName: d.firstName, lastName: d.lastName, hourlyRateCents }
+			data: {
+				role: d.role,
+				firstName: d.firstName,
+				lastName: d.lastName,
+				hourlyRateCents: rateEntry.costRateCents,
+				rateHistoryEntries:
+					rateEntry.costRateCents != null || rateEntry.defaultBillableRateCents != null
+						? {
+								create: {
+									effectiveFrom: rateEntry.effectiveFrom,
+									costRateCents: rateEntry.costRateCents,
+									billableRateCents: rateEntry.defaultBillableRateCents
+								}
+							}
+						: undefined
+			}
 		});
 
 		await logAuditEvent({
@@ -113,7 +172,13 @@ export const actions: Actions = {
 			eventType: 'user_created',
 			entityType: 'user',
 			entityId: result.user.id,
-			newValueJson: { email: d.email, role: d.role, hourlyRateCents }
+			newValueJson: {
+				email: d.email,
+				role: d.role,
+				costRateCents: rateEntry.costRateCents,
+				defaultBillableRateCents: rateEntry.defaultBillableRateCents,
+				effectiveFrom: formatDateInput(rateEntry.effectiveFrom)
+			}
 		});
 
 		return { createSuccess: true };
@@ -265,6 +330,96 @@ export const actions: Actions = {
 			hourlyRateSuccess: true,
 			hourlyRateUserId: parsed.data.userId,
 			hourlyRateValue: formatMoneyFromCents(hourlyRateCents)
+		};
+	},
+
+	addRateHistoryEntry: async ({ request, locals }) => {
+		if (locals.user?.role !== 'admin') {
+			return fail(403, {
+				rateHistoryError: 'Нямате права.',
+				rateHistoryUserId: '',
+				rateHistoryValues: {}
+			});
+		}
+
+		const formData = await request.formData();
+		const raw = {
+			userId: String(formData.get('userId') ?? ''),
+			effectiveFrom: String(formData.get('effectiveFrom') ?? ''),
+			costRate: String(formData.get('costRate') ?? ''),
+			defaultBillableRate: String(formData.get('defaultBillableRate') ?? '')
+		};
+		const parsed = rateHistoryEntrySchema.safeParse(raw);
+
+		if (!parsed.success) {
+			return fail(422, {
+				rateHistoryErrors: parsed.error.flatten().fieldErrors,
+				rateHistoryUserId: raw.userId,
+				rateHistoryValues: raw
+			});
+		}
+
+		const target = await db.user.findUnique({
+			where: { id: parsed.data.userId },
+			select: { id: true, hourlyRateCents: true }
+		});
+		if (!target) {
+			return fail(404, {
+				rateHistoryError: 'Потребителят не е намерен.',
+				rateHistoryUserId: raw.userId,
+				rateHistoryValues: raw
+			});
+		}
+
+		const normalized = normalizeRateEntry(parsed.data);
+		if (
+			Number.isNaN(normalized.effectiveFrom.getTime()) ||
+			Number.isNaN(normalized.costRateCents) ||
+			Number.isNaN(normalized.defaultBillableRateCents)
+		) {
+			return fail(422, {
+				rateHistoryErrors: {
+					costRate: ['Използвайте валидна сума.'],
+					defaultBillableRate: ['Използвайте валидна сума.']
+				},
+				rateHistoryUserId: raw.userId,
+				rateHistoryValues: raw
+			});
+		}
+
+		const entry = await db.userRateHistory.create({
+			data: {
+				userId: parsed.data.userId,
+				effectiveFrom: normalized.effectiveFrom,
+				costRateCents: normalized.costRateCents,
+				billableRateCents: normalized.defaultBillableRateCents
+			}
+		});
+
+		await db.user.update({
+			where: { id: parsed.data.userId },
+			data: {
+				hourlyRateCents: normalized.costRateCents
+			}
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'user_rate_history_entry_created',
+			entityType: 'user',
+			entityId: parsed.data.userId,
+			oldValueJson: { hourlyRateCents: target.hourlyRateCents },
+			newValueJson: {
+				rateHistoryEntryId: entry.id,
+				effectiveFrom: formatDateInput(entry.effectiveFrom),
+				costRateCents: entry.costRateCents,
+				defaultBillableRateCents: entry.billableRateCents
+			}
+		});
+
+		return {
+			rateHistorySuccess: true,
+			rateHistoryUserId: parsed.data.userId
 		};
 	}
 };

@@ -37,6 +37,8 @@ model User {
   taskAssignments TaskAssignment[]
   uploadedTaskAttachments TaskAttachment[] @relation("TaskAttachmentUploader")
   taskTimeLogs    TaskTimeLog[]
+  rateHistoryEntries UserRateHistory[]
+  projectBillableRateOverrides ProjectMemberBillableRateOverride[]
 
   @@map("user")
 }
@@ -222,6 +224,7 @@ model Project {
   updatedAt            DateTime      @updatedAt
   members              ProjectMember[]
   taskLists            TaskList[]
+  memberBillableRateOverrides ProjectMemberBillableRateOverride[]
 
   @@unique([clientId, name])
   @@map("project")
@@ -265,6 +268,7 @@ model Task {
   deadlineDate       DateTime?       @db.Date
   billingType        TaskBillingType @default(hourly)
   flatFeeAmountCents Int?
+  billableRateOverrideCents Int?
   createdByUserId    String
   createdByUser      User            @relation("TaskCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   assignees          TaskAssignment[]
@@ -348,12 +352,41 @@ model TaskTimeLog {
   startMinuteOfDay Int?
   endMinuteOfDay   Int?
   invoicedAt       DateTime?
+  snapshotCostRateCents Int?
+  snapshotBillableRateCents Int?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   @@index([taskId, workDate])
   @@index([userId, workDate])
   @@map("task_time_log")
+}
+
+model UserRateHistory {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  effectiveFrom     DateTime @db.Date
+  costRateCents     Int?
+  billableRateCents Int?
+  createdAt         DateTime @default(now())
+
+  @@index([userId, effectiveFrom])
+  @@map("user_rate_history")
+}
+
+model ProjectMemberBillableRateOverride {
+  id                String   @id @default(cuid())
+  projectId         String
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  effectiveFrom     DateTime @db.Date
+  billableRateCents Int
+  createdAt         DateTime @default(now())
+
+  @@index([projectId, userId, effectiveFrom])
+  @@map("project_member_billable_rate_override")
 }
 
 model ExpenseCategory {

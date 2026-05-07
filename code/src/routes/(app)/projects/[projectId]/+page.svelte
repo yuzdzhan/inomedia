@@ -47,6 +47,8 @@
 		startMinuteOfDay: number | null;
 		endMinuteOfDay: number | null;
 		invoicedAt: string | Date | null;
+		snapshotCostRateCents: number | null;
+		snapshotBillableRateCents: number | null;
 		createdAt: string | Date;
 		user: { id: string; firstName: string; lastName: string };
 	};
@@ -55,8 +57,8 @@
 	let createTaskListOpen = $state(false);
 	let createTaskModal = $state<CreateTaskModalState>(null);
 	let selectedTaskId = $state<string | null>(null);
-	let createTaskBillingType = $state<TaskBillingTypeValue>(data.project.client.isInternal ? 'non_billable' : 'hourly');
-	let selectedTaskBillingType = $state<TaskBillingTypeValue>(data.project.client.isInternal ? 'non_billable' : 'hourly');
+	let createTaskBillingType = $state<TaskBillingTypeValue>('hourly');
+	let selectedTaskBillingType = $state<TaskBillingTypeValue>('hourly');
 	let editingCommentId = $state<string | null>(null);
 	let editingTimeLogId = $state<string | null>(null);
 
@@ -70,6 +72,11 @@
 		}
 
 		return (value / 100).toFixed(2);
+	}
+
+	function formatMoneyLabel(value: number | null | undefined) {
+		const normalized = formatMoneyFromCents(value);
+		return normalized ? `${normalized} ${data.company.currency}` : 'Няма';
 	}
 
 	function formatDeadline(value: string) {
@@ -625,6 +632,9 @@
 									{#if data.permissions.canViewFinancials && task.billingType === 'flat_fee'}
 										<small>{formatMoneyFromCents(task.flatFeeAmountCents)} {data.company.currency}</small>
 									{/if}
+									{#if data.permissions.canViewRates && task.billingType === 'hourly' && task.billableRateOverrideCents != null}
+										<small>По задача: {formatMoneyLabel(task.billableRateOverrideCents)}</small>
+									{/if}
 								</span>
 							</button>
 						{/each}
@@ -761,6 +771,19 @@
 						<input id="create-flatFeeAmount" name="flatFeeAmount" type="text" inputmode="decimal" value={createTaskFieldValue('flatFeeAmount')} />
 						{#if createTaskFieldError('flatFeeAmount')}<span class="error-text">{createTaskFieldError('flatFeeAmount')}</span>{/if}
 					</div>
+					{#if data.permissions.canViewRates}
+						<div class="field" hidden={createTaskBillingType !== 'hourly'}>
+							<label for="create-billableRateOverride">Почасова ставка по задача ({data.company.currency})</label>
+							<input
+								id="create-billableRateOverride"
+								name="billableRateOverride"
+								type="text"
+								inputmode="decimal"
+								value={createTaskFieldValue('billableRateOverride')}
+							/>
+							{#if createTaskFieldError('billableRateOverride')}<span class="error-text">{createTaskFieldError('billableRateOverride')}</span>{/if}
+						</div>
+					{/if}
 				</div>
 
 				<div class="field">
@@ -894,6 +917,19 @@
 							/>
 							{#if taskFieldError('flatFeeAmount')}<span class="error-text">{taskFieldError('flatFeeAmount')}</span>{/if}
 						</div>
+						{#if data.permissions.canViewRates}
+							<div class="field" hidden={selectedTaskBillingType !== 'hourly'}>
+								<label for={'task-billableRateOverride-' + task.id}>Почасова ставка по задача ({data.company.currency})</label>
+								<input
+									id={'task-billableRateOverride-' + task.id}
+									name="billableRateOverride"
+									type="text"
+									inputmode="decimal"
+									value={taskFieldValue('billableRateOverride', formatMoneyFromCents(task.billableRateOverrideCents))}
+								/>
+								{#if taskFieldError('billableRateOverride')}<span class="error-text">{taskFieldError('billableRateOverride')}</span>{/if}
+							</div>
+						{/if}
 					</div>
 					<div class="field">
 						<label>Assignees</label>
@@ -970,6 +1006,12 @@
 							<label>Билинг тип</label>
 							<div class="detail-value">{billingTypeLabels[task.billingType]}</div>
 						</div>
+						{#if data.permissions.canViewRates && task.billingType === 'hourly'}
+							<div class="field">
+								<label>Ставка по задача</label>
+								<div class="detail-value">{formatMoneyLabel(task.billableRateOverrideCents)}</div>
+							</div>
+						{/if}
 					</div>
 					<div class="field">
 						<label>Назначени</label>
@@ -1102,6 +1144,14 @@
 										{/if}
 										{#if timeLog.invoicedAt}
 											<span class="comment-badge">фактуриран</span>
+										{/if}
+										{#if data.permissions.canViewRates}
+											<span class="comment-badge muted">
+												Себестойност {formatMoneyLabel(timeLog.snapshotCostRateCents)}
+											</span>
+											<span class="comment-badge muted">
+												Билируема {formatMoneyLabel(timeLog.snapshotBillableRateCents)}
+											</span>
 										{/if}
 									</div>
 									<div class="comment-tools">
