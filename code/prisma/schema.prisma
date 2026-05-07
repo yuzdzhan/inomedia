@@ -46,6 +46,7 @@ model User {
   createdRecurringTemplates RecurringExpenseTemplate[] @relation("RecurringTemplateCreatedBy")
   ledgerEntries   LedgerEntry[]    @relation("LedgerEntryCreatedBy")
   standaloneIncomes StandaloneIncome[] @relation("StandaloneIncomeCreatedBy")
+  importedBankStatements BankStatement[] @relation("BankStatementImporter")
 
   @@map("user")
 }
@@ -119,6 +120,7 @@ model Company {
   ownedTaskAttachments   TaskAttachment[] @relation("TaskAttachmentOwnerCompany")
   moneyContainers        MoneyContainer[]
   standaloneIncomes      StandaloneIncome[]
+  bankStatements         BankStatement[]
 }
 
 model AuditEvent {
@@ -212,6 +214,13 @@ enum MoneyContainerType {
   cashbox
 }
 
+enum StatementRowMatchState {
+  auto_matched
+  needs_review
+  unmatched
+  irrelevant
+}
+
 enum LedgerEntryType {
   invoice_payment
   standalone_income
@@ -276,6 +285,7 @@ model StandaloneIncome {
   createdByUserId     String
   createdByUser       User           @relation("StandaloneIncomeCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   ledgerEntry         LedgerEntry?
+  statementRows       BankStatementRow[]
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
 
@@ -525,6 +535,7 @@ model InvoicePayment {
   recordedByUserId String
   recordedByUser   User          @relation("InvoicePaymentRecordedBy", fields: [recordedByUserId], references: [id], onDelete: Restrict)
   ledgerEntry      LedgerEntry?
+  statementRows    BankStatementRow[]
   createdAt        DateTime      @default(now())
 
   @@index([invoiceId, paymentDate])
@@ -651,4 +662,45 @@ model RecurringExpenseTemplate {
 
   @@index([companyId, isActive])
   @@map("recurring_expense_template")
+}
+
+model BankStatement {
+  id                  String        @id @default(cuid())
+  companyId           String
+  company             Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  originalFilename    String
+  contentType         String
+  sizeBytes           Int
+  fileBlob            Bytes
+  importedAt          DateTime      @default(now())
+  parsingVersion      String        @default("v1-csv")
+  parseStatus         String        @default("ok")
+  importedByUserId    String
+  importedByUser      User          @relation("BankStatementImporter", fields: [importedByUserId], references: [id], onDelete: Restrict)
+  rows                BankStatementRow[]
+  createdAt           DateTime      @default(now())
+
+  @@index([companyId, importedAt])
+  @@map("bank_statement")
+}
+
+model BankStatementRow {
+  id                  String                  @id @default(cuid())
+  statementId         String
+  statement           BankStatement           @relation(fields: [statementId], references: [id], onDelete: Cascade)
+  rowIndex            Int
+  transactionDate     DateTime                @db.Date
+  description         String
+  amountCents         Int
+  matchState          StatementRowMatchState  @default(unmatched)
+  invoicePaymentId    String?
+  invoicePayment      InvoicePayment?         @relation(fields: [invoicePaymentId], references: [id], onDelete: SetNull)
+  standaloneIncomeId  String?
+  standaloneIncome    StandaloneIncome?       @relation(fields: [standaloneIncomeId], references: [id], onDelete: SetNull)
+  reviewNote          String?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+
+  @@index([statementId, rowIndex])
+  @@map("bank_statement_row")
 }

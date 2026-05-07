@@ -30,6 +30,7 @@
 			{#if ['admin', 'accountant'].includes(data.user.role)}
 				<li><a href="/invoices" aria-current={page.url.pathname === '/invoices' ? 'page' : undefined}>Чернови фактури</a></li>
 				<li><a href="/cashflow" aria-current={page.url.pathname === '/cashflow' ? 'page' : undefined}>Финанси</a></li>
+				<li><a href="/bank-statements" aria-current={page.url.pathname.startsWith('/bank-statements') ? 'page' : undefined}>Банк. извлечения</a></li>
 			{/if}
 			{#if data.user.role === 'admin'}
 				<li><a href="/settings" aria-current={page.url.pathname === '/settings' ? 'page' : undefined}>Настройки</a></li>
