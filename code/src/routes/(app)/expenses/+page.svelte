@@ -3,11 +3,19 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	let activeTab = $state<'expenses' | 'categories'>('expenses');
+	let activeTab = $state<'expenses' | 'recurring' | 'categories'>('expenses');
 	let showCreateForm = $state(false);
 	let editingExpenseId = $state<string | null>(null);
 	let markingPaidExpenseId = $state<string | null>(null);
 	let showAddCategoryForm = $state(false);
+
+	// Recurring template form state
+	let showCreateTemplateForm = $state(false);
+	let editingTemplateId = $state<string | null>(null);
+	let createTemplateClientId = $state('');
+	let createTemplateProjectId = $state('');
+	let editTemplateClientId = $state('');
+	let editTemplateProjectId = $state('');
 
 	// Client/project cascading select state for create form
 	let createClientId = $state('');
@@ -40,6 +48,10 @@
 		return client.projects;
 	}
 
+	function formatFrequency(f: string) {
+		return f === 'monthly' ? 'Месечно' : 'Годишно';
+	}
+
 	function createFieldError(field: string) {
 		return (form as any)?.createExpenseErrors?.[field]?.[0];
 	}
@@ -68,6 +80,26 @@
 		return (form as any)?.addCategoryValues?.[field] ?? '';
 	}
 
+	function templateCreateFieldError(field: string) {
+		return (form as any)?.createTemplateErrors?.[field]?.[0];
+	}
+
+	function templateCreateFieldValue(field: string) {
+		return (form as any)?.createTemplateValues?.[field] ?? '';
+	}
+
+	function templateEditFieldError(templateId: string, field: string) {
+		return (form as any)?.editTemplateId === templateId
+			? (form as any)?.editTemplateErrors?.[field]?.[0]
+			: null;
+	}
+
+	function templateEditFieldValue(templateId: string, field: string, fallback: string) {
+		return (form as any)?.editTemplateId === templateId
+			? ((form as any)?.editTemplateValues?.[field] ?? fallback)
+			: fallback;
+	}
+
 	$effect(() => {
 		if ((form as any)?.createExpenseSuccess) {
 			showCreateForm = false;
@@ -85,6 +117,17 @@
 		}
 		if ((form as any)?.editExpenseId) {
 			editingExpenseId = (form as any).editExpenseId;
+		}
+		if ((form as any)?.createTemplateSuccess) {
+			showCreateTemplateForm = false;
+			createTemplateClientId = '';
+			createTemplateProjectId = '';
+		}
+		if ((form as any)?.editTemplateSuccess) {
+			editingTemplateId = null;
+		}
+		if ((form as any)?.editTemplateId) {
+			editingTemplateId = (form as any).editTemplateId;
 		}
 	});
 
@@ -104,6 +147,16 @@
 
 	function cancelMarkPaid() {
 		markingPaidExpenseId = null;
+	}
+
+	function startEditTemplate(tpl: (typeof data.recurringTemplates)[0]) {
+		editingTemplateId = tpl.id;
+		editTemplateClientId = tpl.clientId ?? '';
+		editTemplateProjectId = tpl.projectId ?? '';
+	}
+
+	function cancelEditTemplate() {
+		editingTemplateId = null;
 	}
 </script>
 
@@ -128,6 +181,16 @@
 	>
 		Разходи
 	</button>
+	{#if data.permissions.canManageRecurring}
+		<button
+			type="button"
+			class="tab-btn"
+			class:active={activeTab === 'recurring'}
+			onclick={() => (activeTab = 'recurring')}
+		>
+			Повтарящи се разходи
+		</button>
+	{/if}
 	{#if data.permissions.canManageCategories}
 		<button
 			type="button"
@@ -268,6 +331,9 @@
 						<div class="expense-meta">
 							<div class="expense-title">
 								<span class="expense-description">{expense.description}</span>
+								{#if expense.isFromTemplate}
+									<span class="badge badge-template" title="Генериран от повтарящ се шаблон">↻ шаблон</span>
+								{/if}
 								<span
 									class="badge"
 									class:badge-paid={expense.status === 'paid'}
@@ -466,6 +532,334 @@
 	{/if}
 {/if}
 
+<!-- ─── RECURRING TEMPLATES TAB ────────────────────────────────────────── -->
+{#if activeTab === 'recurring' && data.permissions.canManageRecurring}
+	{#if (form as any)?.createTemplateError}
+		<div class="alert error">{(form as any).createTemplateError}</div>
+	{/if}
+	{#if (form as any)?.createTemplateSuccess}
+		<div class="alert success">Шаблонът е създаден и бъдещите плащания са генерирани.</div>
+	{/if}
+	{#if (form as any)?.editTemplateError}
+		<div class="alert error">{(form as any).editTemplateError}</div>
+	{/if}
+	{#if (form as any)?.editTemplateSuccess}
+		<div class="alert success">Шаблонът е обновен и плащанията са регенерирани.</div>
+	{/if}
+	{#if (form as any)?.deactivateTemplateError}
+		<div class="alert error">{(form as any).deactivateTemplateError}</div>
+	{/if}
+	{#if (form as any)?.deactivateTemplateSuccess}
+		<div class="alert success">Шаблонът е деактивиран и бъдещите плащания са изтрити.</div>
+	{/if}
+
+	<div class="section-actions">
+		<button class="btn-primary" onclick={() => (showCreateTemplateForm = !showCreateTemplateForm)}>
+			{showCreateTemplateForm ? 'Отказ' : '+ Нов шаблон'}
+		</button>
+	</div>
+
+	{#if showCreateTemplateForm}
+		<section class="card create-card">
+			<h2>Нов повтарящ се разход</h2>
+			<form method="POST" action="?/createRecurringTemplate">
+				<div class="grid two">
+					<div class="field">
+						<label for="tpl-create-categoryId">Категория</label>
+						<select id="tpl-create-categoryId" name="categoryId" required>
+							<option value="">-- Изберете категория --</option>
+							{#each data.activeCategories as cat}
+								<option value={cat.id} selected={templateCreateFieldValue('categoryId') === cat.id}>{cat.name}</option>
+							{/each}
+						</select>
+						{#if templateCreateFieldError('categoryId')}<span class="error-text">{templateCreateFieldError('categoryId')}</span>{/if}
+					</div>
+
+					<div class="field">
+						<label for="tpl-create-frequency">Честота</label>
+						<select id="tpl-create-frequency" name="frequency" required>
+							<option value="">-- Изберете честота --</option>
+							<option value="monthly" selected={templateCreateFieldValue('frequency') === 'monthly'}>Месечно</option>
+							<option value="yearly" selected={templateCreateFieldValue('frequency') === 'yearly'}>Годишно</option>
+						</select>
+						{#if templateCreateFieldError('frequency')}<span class="error-text">{templateCreateFieldError('frequency')}</span>{/if}
+					</div>
+
+					<div class="field">
+						<label for="tpl-create-amountCents">Сума (стотинки)</label>
+						<input
+							id="tpl-create-amountCents"
+							name="amountCents"
+							type="number"
+							min="1"
+							placeholder="напр. 5000 = 50.00"
+							value={templateCreateFieldValue('amountCents')}
+							required
+						/>
+						{#if templateCreateFieldError('amountCents')}<span class="error-text">{templateCreateFieldError('amountCents')}</span>{/if}
+					</div>
+
+					<div class="field">
+						<label for="tpl-create-startDate">Начална дата</label>
+						<input
+							id="tpl-create-startDate"
+							name="startDate"
+							type="date"
+							value={templateCreateFieldValue('startDate')}
+							required
+						/>
+						{#if templateCreateFieldError('startDate')}<span class="error-text">{templateCreateFieldError('startDate')}</span>{/if}
+					</div>
+
+					<div class="field">
+						<label for="tpl-create-endDate">Крайна дата (по избор)</label>
+						<input
+							id="tpl-create-endDate"
+							name="endDate"
+							type="date"
+							value={templateCreateFieldValue('endDate')}
+						/>
+						{#if templateCreateFieldError('endDate')}<span class="error-text">{templateCreateFieldError('endDate')}</span>{/if}
+					</div>
+
+					<div class="field">
+						<label for="tpl-create-clientId">Клиент (по избор)</label>
+						<select
+							id="tpl-create-clientId"
+							name="clientId"
+							bind:value={createTemplateClientId}
+							onchange={() => (createTemplateProjectId = '')}
+						>
+							<option value="">-- Режийни (без клиент) --</option>
+							{#each data.clients as client}
+								<option value={client.id}>{client.legalName}</option>
+							{/each}
+						</select>
+					</div>
+
+					<div class="field">
+						<label for="tpl-create-projectId">Проект (по избор)</label>
+						<select id="tpl-create-projectId" name="projectId" bind:value={createTemplateProjectId}>
+							<option value="">-- Без проект --</option>
+							{#each getProjectsForClient(createTemplateClientId) as project}
+								<option value={project.id}>{project.name}</option>
+							{/each}
+							{#if !createTemplateClientId}
+								{#each data.clients as client}
+									{#each getProjectsForClient(client.id) as project}
+										<option value={project.id}>{client.legalName} / {project.name}</option>
+									{/each}
+								{/each}
+							{/if}
+						</select>
+					</div>
+				</div>
+
+				<div class="field">
+					<label for="tpl-create-description">Описание</label>
+					<textarea id="tpl-create-description" name="description" rows="3" required>{templateCreateFieldValue('description')}</textarea>
+					{#if templateCreateFieldError('description')}<span class="error-text">{templateCreateFieldError('description')}</span>{/if}
+				</div>
+
+				<button type="submit" class="btn-primary">Създай шаблон</button>
+			</form>
+		</section>
+	{/if}
+
+	{#if data.recurringTemplates.length === 0}
+		<p class="empty-state">Няма повтарящи се разходи.</p>
+	{:else}
+		<div class="expense-list">
+			{#each data.recurringTemplates as tpl}
+				<section class="card expense-card" class:template-inactive={!tpl.isActive}>
+					<div class="expense-header">
+						<div class="expense-meta">
+							<div class="expense-title">
+								<span class="expense-description">{tpl.description}</span>
+								<span class="badge badge-freq">{formatFrequency(tpl.frequency)}</span>
+								{#if tpl.isActive}
+									<span class="badge badge-active">Активен</span>
+								{:else}
+									<span class="badge badge-inactive">Неактивен</span>
+								{/if}
+							</div>
+							<div class="expense-details">
+								<span class="detail-item">
+									<span class="detail-label">Категория:</span>
+									{tpl.category.name}
+								</span>
+								<span class="detail-item">
+									<span class="detail-label">Сума:</span>
+									{formatAmount(tpl.amountCents)} лв.
+								</span>
+								<span class="detail-item">
+									<span class="detail-label">От дата:</span>
+									{formatDate(tpl.startDate)}
+								</span>
+								<span class="detail-item">
+									<span class="detail-label">До дата:</span>
+									{tpl.endDate ? formatDate(tpl.endDate) : 'без край'}
+								</span>
+								{#if tpl.project}
+									<span class="detail-item">
+										<span class="detail-label">Проект:</span>
+										{tpl.client ? tpl.client.legalName + ' / ' : ''}{tpl.project.name}
+									</span>
+								{:else if tpl.client}
+									<span class="detail-item">
+										<span class="detail-label">Клиент:</span>
+										{tpl.client.legalName}
+									</span>
+								{:else}
+									<span class="detail-item">
+										<span class="detail-label">Тип:</span>
+										Режийни
+									</span>
+								{/if}
+							</div>
+						</div>
+
+						{#if tpl.isActive}
+							<div class="expense-actions">
+								<button
+									type="button"
+									class="btn-secondary btn-sm"
+									onclick={() => (editingTemplateId === tpl.id ? cancelEditTemplate() : startEditTemplate(tpl))}
+								>
+									{editingTemplateId === tpl.id ? 'Затвори' : 'Редактирай'}
+								</button>
+								<form method="POST" action="?/deactivateRecurringTemplate" onsubmit={(e) => { if (!confirm('Сигурни ли сте, че искате да деактивирате шаблона? Всички бъдещи неплатени плащания ще бъдат изтрити.')) e.preventDefault(); }}>
+									<input type="hidden" name="templateId" value={tpl.id} />
+									<button type="submit" class="btn-danger btn-sm">Деактивирай</button>
+								</form>
+							</div>
+						{/if}
+					</div>
+
+					{#if editingTemplateId === tpl.id && tpl.isActive}
+						<div class="expense-edit-form">
+							<form method="POST" action="?/editRecurringTemplate">
+								<input type="hidden" name="templateId" value={tpl.id} />
+								<div class="grid two">
+									<div class="field">
+										<label for={'tpl-edit-cat-' + tpl.id}>Категория</label>
+										<select id={'tpl-edit-cat-' + tpl.id} name="categoryId" required>
+											{#each data.activeCategories as cat}
+												<option
+													value={cat.id}
+													selected={templateEditFieldValue(tpl.id, 'categoryId', tpl.categoryId) === cat.id}
+												>{cat.name}</option>
+											{/each}
+										</select>
+										{#if templateEditFieldError(tpl.id, 'categoryId')}<span class="error-text">{templateEditFieldError(tpl.id, 'categoryId')}</span>{/if}
+									</div>
+
+									<div class="field">
+										<label for={'tpl-edit-freq-' + tpl.id}>Честота</label>
+										<select id={'tpl-edit-freq-' + tpl.id} name="frequency" required>
+											<option value="monthly" selected={templateEditFieldValue(tpl.id, 'frequency', tpl.frequency) === 'monthly'}>Месечно</option>
+											<option value="yearly" selected={templateEditFieldValue(tpl.id, 'frequency', tpl.frequency) === 'yearly'}>Годишно</option>
+										</select>
+										{#if templateEditFieldError(tpl.id, 'frequency')}<span class="error-text">{templateEditFieldError(tpl.id, 'frequency')}</span>{/if}
+									</div>
+
+									<div class="field">
+										<label for={'tpl-edit-amount-' + tpl.id}>Сума (стотинки)</label>
+										<input
+											id={'tpl-edit-amount-' + tpl.id}
+											name="amountCents"
+											type="number"
+											min="1"
+											value={templateEditFieldValue(tpl.id, 'amountCents', String(tpl.amountCents))}
+											required
+										/>
+										{#if templateEditFieldError(tpl.id, 'amountCents')}<span class="error-text">{templateEditFieldError(tpl.id, 'amountCents')}</span>{/if}
+									</div>
+
+									<div class="field">
+										<label for={'tpl-edit-start-' + tpl.id}>Начална дата</label>
+										<input
+											id={'tpl-edit-start-' + tpl.id}
+											name="startDate"
+											type="date"
+											value={templateEditFieldValue(tpl.id, 'startDate', toInputDate(tpl.startDate))}
+											required
+										/>
+										{#if templateEditFieldError(tpl.id, 'startDate')}<span class="error-text">{templateEditFieldError(tpl.id, 'startDate')}</span>{/if}
+									</div>
+
+									<div class="field">
+										<label for={'tpl-edit-end-' + tpl.id}>Крайна дата (по избор)</label>
+										<input
+											id={'tpl-edit-end-' + tpl.id}
+											name="endDate"
+											type="date"
+											value={templateEditFieldValue(tpl.id, 'endDate', toInputDate(tpl.endDate))}
+										/>
+										{#if templateEditFieldError(tpl.id, 'endDate')}<span class="error-text">{templateEditFieldError(tpl.id, 'endDate')}</span>{/if}
+									</div>
+
+									<div class="field">
+										<label for={'tpl-edit-client-' + tpl.id}>Клиент (по избор)</label>
+										<select
+											id={'tpl-edit-client-' + tpl.id}
+											name="clientId"
+											bind:value={editTemplateClientId}
+											onchange={() => (editTemplateProjectId = '')}
+										>
+											<option value="">-- Режийни (без клиент) --</option>
+											{#each data.clients as client}
+												<option value={client.id} selected={editTemplateClientId === client.id || (editTemplateClientId === '' && tpl.clientId === client.id)}>{client.legalName}</option>
+											{/each}
+										</select>
+									</div>
+
+									<div class="field">
+										<label for={'tpl-edit-project-' + tpl.id}>Проект (по избор)</label>
+										<select
+											id={'tpl-edit-project-' + tpl.id}
+											name="projectId"
+											bind:value={editTemplateProjectId}
+										>
+											<option value="">-- Без проект --</option>
+											{#if editTemplateClientId}
+												{#each getProjectsForClient(editTemplateClientId) as project}
+													<option value={project.id}>{project.name}</option>
+												{/each}
+											{:else}
+												{#each data.clients as client}
+													{#each getProjectsForClient(client.id) as project}
+														<option value={project.id} selected={editTemplateProjectId === '' && tpl.projectId === project.id}>
+															{client.legalName} / {project.name}
+														</option>
+													{/each}
+												{/each}
+											{/if}
+										</select>
+									</div>
+								</div>
+
+								<div class="field">
+									<label for={'tpl-edit-desc-' + tpl.id}>Описание</label>
+									<textarea id={'tpl-edit-desc-' + tpl.id} name="description" rows="3" required>{templateEditFieldValue(tpl.id, 'description', tpl.description)}</textarea>
+									{#if templateEditFieldError(tpl.id, 'description')}<span class="error-text">{templateEditFieldError(tpl.id, 'description')}</span>{/if}
+								</div>
+
+								<p class="regen-note">При запис всички неплатени бъдещи плащания ще бъдат регенерирани.</p>
+
+								<div class="form-actions">
+									<button type="submit" class="btn-primary">Запази и регенерирай</button>
+									<button type="button" class="btn-secondary" onclick={cancelEditTemplate}>Отказ</button>
+								</div>
+							</form>
+						</div>
+					{/if}
+				</section>
+			{/each}
+		</div>
+	{/if}
+{/if}
+
 <!-- ─── CATEGORIES TAB ─────────────────────────────────────────────────── -->
 {#if activeTab === 'categories' && data.permissions.canManageCategories}
 	{#if (form as any)?.addCategoryError}
@@ -612,6 +1006,10 @@
 		overflow: hidden;
 	}
 
+	.template-inactive {
+		opacity: 0.65;
+	}
+
 	.expense-header {
 		display: flex;
 		align-items: flex-start;
@@ -673,6 +1071,13 @@
 	.form-actions {
 		display: flex;
 		gap: 10px;
+	}
+
+	.regen-note {
+		font-size: 0.82rem;
+		color: #64748b;
+		margin-top: 0;
+		font-style: italic;
 	}
 
 	/* Categories */
@@ -781,6 +1186,16 @@
 	.badge-inactive {
 		background: #e2e8f0;
 		color: #475569;
+	}
+
+	.badge-template {
+		background: #ede9fe;
+		color: #6d28d9;
+	}
+
+	.badge-freq {
+		background: #dbeafe;
+		color: #1d4ed8;
 	}
 
 	/* Alerts */

@@ -26,6 +26,10 @@ function canManageCategories(role: string) {
 	return role === 'admin';
 }
 
+function canManageRecurringTemplates(role: string) {
+	return ['admin', 'accountant'].includes(role);
+}
+
 // ─── Schemas ───────────────────────────────────────────────────────────────
 
 const expenseSchema = z.object({
@@ -43,6 +47,62 @@ const expenseSchema = z.object({
 const categorySchema = z.object({
 	name: z.string().trim().min(2, 'Въведете наименование.').max(120, 'Наименованието е твърде дълго.')
 });
+
+const recurringTemplateSchema = z.object({
+	categoryId: z.string().min(1, 'Изберете категория.'),
+	description: z.string().trim().min(2, 'Описанието е задължително.').max(500, 'Описанието е твърде дълго.'),
+	amountCents: z.coerce
+		.number()
+		.int('Сумата трябва да е цяло число.')
+		.min(1, 'Сумата трябва да е положителна.'),
+	frequency: z.enum(['monthly', 'yearly'], { message: 'Изберете честота.' }),
+	startDate: z.string().min(1, 'Началната дата е задължителна.'),
+	endDate: z.string().optional(),
+	clientId: z.string().optional(),
+	projectId: z.string().optional()
+});
+
+// ─── Occurrence generation helper ──────────────────────────────────────────
+
+function generateOccurrenceDates(
+	frequency: 'monthly' | 'yearly',
+	startDate: Date,
+	endDate: Date | null | undefined
+): Date[] {
+	const today = new Date();
+	today.setHours(0, 0, 0, 0);
+
+	const limitDate = new Date(today);
+	limitDate.setMonth(limitDate.getMonth() + 12);
+
+	const ceiling = endDate && endDate < limitDate ? endDate : limitDate;
+
+	const dates: Date[] = [];
+
+	if (frequency === 'monthly') {
+		// Start from the first day of the month containing startDate or today, whichever is later
+		let cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+		while (cursor <= ceiling) {
+			if (cursor >= today) {
+				dates.push(new Date(cursor));
+			}
+			cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+		}
+	} else {
+		// yearly: same month+day as startDate, each year
+		let year = startDate.getFullYear();
+		while (true) {
+			const candidate = new Date(year, startDate.getMonth(), startDate.getDate());
+			if (candidate > ceiling) break;
+			if (candidate >= today) {
+				dates.push(new Date(candidate));
+			}
+			year++;
+		}
+	}
+
+	return dates;
+}
 
 // ─── Load ──────────────────────────────────────────────────────────────────
 
@@ -116,17 +176,33 @@ export const load: PageServerLoad = async ({ parent }) => {
 		}
 	});
 
+	// Load recurring templates (admin/accountant only)
+	const recurringTemplates = canManageRecurringTemplates(user.role)
+		? await db.recurringExpenseTemplate.findMany({
+				where: { companyId: company.id },
+				orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }],
+				include: {
+					category: true,
+					client: { select: { id: true, legalName: true } },
+					project: { select: { id: true, name: true } },
+					createdByUser: { select: { id: true, firstName: true, lastName: true } }
+				}
+			})
+		: [];
+
 	return {
 		categories,
 		activeCategories,
 		clients,
 		expenses,
+		recurringTemplates,
 		accessibleProjects,
 		permissions: {
 			canManageFinance: canManageFinanceExpenses(user.role),
 			canManageProject: canManageProjectExpenses(user.role),
 			canMarkPaid: canMarkPaid(user.role),
 			canManageCategories: canManageCategories(user.role),
+			canManageRecurring: canManageRecurringTemplates(user.role),
 			isManager: user.role === 'manager'
 		}
 	};
@@ -462,5 +538,279 @@ export const actions: Actions = {
 		});
 
 		return { deactivateCategorySuccess: true };
+	},
+
+	createRecurringTemplate: async ({ request, locals, getClientAddress }) => {
+		if (!locals.user || !canManageRecurringTemplates(locals.user.role)) {
+			return fail(403, { createTemplateError: 'Нямате права за тази операция.' });
+		}
+
+		const company = await db.company.findFirst();
+		if (!company) return fail(500, { createTemplateError: 'Грешка при зареждане на компанията.' });
+
+		const formData = await request.formData();
+		const raw = {
+			categoryId: String(formData.get('categoryId') ?? ''),
+			description: String(formData.get('description') ?? ''),
+			amountCents: String(formData.get('amountCents') ?? ''),
+			frequency: String(formData.get('frequency') ?? ''),
+			startDate: String(formData.get('startDate') ?? ''),
+			endDate: String(formData.get('endDate') ?? '') || undefined,
+			clientId: String(formData.get('clientId') ?? '') || undefined,
+			projectId: String(formData.get('projectId') ?? '') || undefined
+		};
+
+		const parsed = recurringTemplateSchema.safeParse(raw);
+		if (!parsed.success) {
+			return fail(422, {
+				createTemplateErrors: parsed.error.flatten().fieldErrors,
+				createTemplateValues: raw
+			});
+		}
+
+		const data = parsed.data;
+
+		// Validate category
+		const category = await db.expenseCategory.findFirst({
+			where: { id: data.categoryId, companyId: company.id, isActive: true }
+		});
+		if (!category) return fail(400, { createTemplateError: 'Невалидна категория.' });
+
+		// Validate client/project
+		if (data.clientId) {
+			const client = await db.client.findFirst({ where: { id: data.clientId, companyId: company.id } });
+			if (!client) return fail(400, { createTemplateError: 'Невалиден клиент.' });
+		}
+		if (data.projectId) {
+			const project = await db.project.findFirst({ where: { id: data.projectId } });
+			if (!project) return fail(400, { createTemplateError: 'Невалиден проект.' });
+		}
+
+		const startDate = new Date(data.startDate);
+		const endDate = data.endDate ? new Date(data.endDate) : null;
+
+		const occurrenceDates = generateOccurrenceDates(data.frequency, startDate, endDate);
+
+		const template = await db.$transaction(async (tx) => {
+			const tpl = await tx.recurringExpenseTemplate.create({
+				data: {
+					companyId: company.id,
+					categoryId: data.categoryId,
+					clientId: data.clientId ?? null,
+					projectId: data.projectId ?? null,
+					description: data.description,
+					amountCents: data.amountCents,
+					frequency: data.frequency,
+					startDate,
+					endDate,
+					isActive: true,
+					createdByUserId: locals.user!.id
+				}
+			});
+
+			if (occurrenceDates.length > 0) {
+				await tx.expense.createMany({
+					data: occurrenceDates.map((date) => ({
+						companyId: company.id,
+						categoryId: data.categoryId,
+						clientId: data.clientId ?? null,
+						projectId: data.projectId ?? null,
+						description: data.description,
+						amountCents: data.amountCents,
+						incurredDate: date,
+						status: 'unpaid' as const,
+						isFromTemplate: true,
+						recurringTemplateId: tpl.id,
+						createdByUserId: locals.user!.id
+					}))
+				});
+			}
+
+			return tpl;
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'recurring_expense_template_created',
+			entityType: 'recurring_expense_template',
+			entityId: template.id,
+			newValueJson: {
+				categoryId: data.categoryId,
+				description: data.description,
+				amountCents: data.amountCents,
+				frequency: data.frequency,
+				startDate: data.startDate,
+				endDate: data.endDate,
+				clientId: data.clientId,
+				projectId: data.projectId,
+				occurrencesGenerated: occurrenceDates.length
+			},
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return { createTemplateSuccess: true };
+	},
+
+	editRecurringTemplate: async ({ request, locals, getClientAddress }) => {
+		if (!locals.user || !canManageRecurringTemplates(locals.user.role)) {
+			return fail(403, { editTemplateError: 'Нямате права за тази операция.' });
+		}
+
+		const formData = await request.formData();
+		const templateId = String(formData.get('templateId') ?? '');
+		const raw = {
+			categoryId: String(formData.get('categoryId') ?? ''),
+			description: String(formData.get('description') ?? ''),
+			amountCents: String(formData.get('amountCents') ?? ''),
+			frequency: String(formData.get('frequency') ?? ''),
+			startDate: String(formData.get('startDate') ?? ''),
+			endDate: String(formData.get('endDate') ?? '') || undefined,
+			clientId: String(formData.get('clientId') ?? '') || undefined,
+			projectId: String(formData.get('projectId') ?? '') || undefined
+		};
+
+		const parsed = recurringTemplateSchema.safeParse(raw);
+		if (!parsed.success) {
+			return fail(422, {
+				editTemplateErrors: parsed.error.flatten().fieldErrors,
+				editTemplateValues: raw,
+				editTemplateId: templateId
+			});
+		}
+
+		const data = parsed.data;
+
+		const template = await db.recurringExpenseTemplate.findUnique({ where: { id: templateId } });
+		if (!template) {
+			return fail(404, { editTemplateError: 'Шаблонът не е намерен.', editTemplateId: templateId });
+		}
+
+		const startDate = new Date(data.startDate);
+		const endDate = data.endDate ? new Date(data.endDate) : null;
+
+		const occurrenceDates = generateOccurrenceDates(data.frequency, startDate, endDate);
+
+		await db.$transaction(async (tx) => {
+			// Delete existing unpaid occurrences linked to this template
+			await tx.expense.deleteMany({
+				where: {
+					recurringTemplateId: templateId,
+					status: 'unpaid'
+				}
+			});
+
+			// Update the template
+			await tx.recurringExpenseTemplate.update({
+				where: { id: templateId },
+				data: {
+					categoryId: data.categoryId,
+					clientId: data.clientId ?? null,
+					projectId: data.projectId ?? null,
+					description: data.description,
+					amountCents: data.amountCents,
+					frequency: data.frequency,
+					startDate,
+					endDate
+				}
+			});
+
+			// Recreate occurrences
+			if (occurrenceDates.length > 0) {
+				await tx.expense.createMany({
+					data: occurrenceDates.map((date) => ({
+						companyId: template.companyId,
+						categoryId: data.categoryId,
+						clientId: data.clientId ?? null,
+						projectId: data.projectId ?? null,
+						description: data.description,
+						amountCents: data.amountCents,
+						incurredDate: date,
+						status: 'unpaid' as const,
+						isFromTemplate: true,
+						recurringTemplateId: templateId,
+						createdByUserId: locals.user!.id
+					}))
+				});
+			}
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'recurring_expense_template_updated',
+			entityType: 'recurring_expense_template',
+			entityId: templateId,
+			oldValueJson: {
+				categoryId: template.categoryId,
+				description: template.description,
+				amountCents: template.amountCents,
+				frequency: template.frequency,
+				startDate: template.startDate,
+				endDate: template.endDate,
+				clientId: template.clientId,
+				projectId: template.projectId
+			},
+			newValueJson: {
+				categoryId: data.categoryId,
+				description: data.description,
+				amountCents: data.amountCents,
+				frequency: data.frequency,
+				startDate: data.startDate,
+				endDate: data.endDate,
+				clientId: data.clientId,
+				projectId: data.projectId,
+				occurrencesGenerated: occurrenceDates.length
+			},
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return { editTemplateSuccess: true, editTemplateId: templateId };
+	},
+
+	deactivateRecurringTemplate: async ({ request, locals, getClientAddress }) => {
+		if (!locals.user || !canManageRecurringTemplates(locals.user.role)) {
+			return fail(403, { deactivateTemplateError: 'Нямате права за тази операция.' });
+		}
+
+		const formData = await request.formData();
+		const templateId = String(formData.get('templateId') ?? '');
+
+		const template = await db.recurringExpenseTemplate.findUnique({ where: { id: templateId } });
+		if (!template) {
+			return fail(404, { deactivateTemplateError: 'Шаблонът не е намерен.' });
+		}
+		if (!template.isActive) {
+			return fail(400, { deactivateTemplateError: 'Шаблонът вече е деактивиран.' });
+		}
+
+		await db.$transaction(async (tx) => {
+			// Delete future unpaid occurrences
+			await tx.expense.deleteMany({
+				where: {
+					recurringTemplateId: templateId,
+					status: 'unpaid'
+				}
+			});
+
+			// Deactivate template
+			await tx.recurringExpenseTemplate.update({
+				where: { id: templateId },
+				data: { isActive: false }
+			});
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'recurring_expense_template_deactivated',
+			entityType: 'recurring_expense_template',
+			entityId: templateId,
+			oldValueJson: { isActive: true },
+			newValueJson: { isActive: false },
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return { deactivateTemplateSuccess: true };
 	}
 };

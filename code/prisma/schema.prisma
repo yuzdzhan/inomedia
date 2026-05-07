@@ -43,6 +43,7 @@ model User {
   recordedPayments InvoicePayment[] @relation("InvoicePaymentRecordedBy")
   createdExpenses Expense[] @relation("ExpenseCreatedBy")
   paidExpenses    Expense[] @relation("ExpensePaidBy")
+  createdRecurringTemplates RecurringExpenseTemplate[] @relation("RecurringTemplateCreatedBy")
 
   @@map("user")
 }
@@ -112,6 +113,7 @@ model Company {
   clients                Client[]
   expenseCategories      ExpenseCategory[]
   expenses               Expense[]
+  recurringTemplates     RecurringExpenseTemplate[]
   ownedTaskAttachments   TaskAttachment[] @relation("TaskAttachmentOwnerCompany")
 }
 
@@ -196,6 +198,11 @@ enum PaymentMethod {
   cash
 }
 
+enum RecurringFrequency {
+  monthly
+  yearly
+}
+
 model Client {
   id                String       @id @default(cuid())
   companyId         String
@@ -215,6 +222,7 @@ model Client {
   projects          Project[]
   invoices          Invoice[]
   expenses          Expense[]
+  recurringTemplates RecurringExpenseTemplate[]
 
   @@unique([companyId, legalName])
   @@map("client")
@@ -252,6 +260,7 @@ model Project {
   taskLists            TaskList[]
   memberBillableRateOverrides ProjectMemberBillableRateOverride[]
   expenses             Expense[]
+  recurringTemplates   RecurringExpenseTemplate[]
 
   @@unique([clientId, name])
   @@map("project")
@@ -496,6 +505,8 @@ model ExpenseCategory {
   updatedAt  DateTime @updatedAt
   expenses   Expense[]
 
+  recurringTemplates RecurringExpenseTemplate[]
+
   @@unique([companyId, name])
   @@map("expense_category")
 }
@@ -517,6 +528,9 @@ model Expense {
   paidDate            DateTime?       @db.Date
   paidByUserId        String?
   paidByUser          User?           @relation("ExpensePaidBy", fields: [paidByUserId], references: [id], onDelete: Restrict)
+  recurringTemplateId String?
+  recurringTemplate   RecurringExpenseTemplate? @relation(fields: [recurringTemplateId], references: [id], onDelete: SetNull)
+  isFromTemplate      Boolean         @default(false)
   createdByUserId     String
   createdByUser       User            @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   createdAt           DateTime        @default(now())
@@ -525,5 +539,32 @@ model Expense {
   @@index([companyId, incurredDate])
   @@index([projectId, incurredDate])
   @@index([clientId, incurredDate])
+  @@index([recurringTemplateId])
   @@map("expense")
+}
+
+model RecurringExpenseTemplate {
+  id                  String             @id @default(cuid())
+  companyId           String
+  company             Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  categoryId          String
+  category            ExpenseCategory    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  clientId            String?
+  client              Client?            @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  projectId           String?
+  project             Project?           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  description         String
+  amountCents         Int
+  frequency           RecurringFrequency
+  startDate           DateTime           @db.Date
+  endDate             DateTime?          @db.Date
+  isActive            Boolean            @default(true)
+  createdByUserId     String
+  createdByUser       User               @relation("RecurringTemplateCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  occurrences         Expense[]
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@index([companyId, isActive])
+  @@map("recurring_expense_template")
 }
