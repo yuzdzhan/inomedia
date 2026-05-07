@@ -2,6 +2,7 @@ import { redirect, fail } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { auth } from '$lib/server/auth';
 import { logAuditEvent } from '$lib/server/audit';
+import { formatMoneyFromCents, parseOptionalMoneyToCents } from '$lib/server/project-policy';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -11,21 +12,29 @@ export const load: PageServerLoad = async ({ parent }) => {
 		redirect(302, '/dashboard');
 	}
 
-	const users = await db.user.findMany({
-		orderBy: [{ status: 'asc' }, { lastName: 'asc' }, { firstName: 'asc' }],
-		select: {
-			id: true,
-			firstName: true,
-			lastName: true,
-			email: true,
-			role: true,
-			status: true,
-			createdAt: true,
-			deactivatedAt: true
-		}
-	});
+	const [company, users] = await db.$transaction([
+		db.company.findFirst({
+			select: {
+				currency: true
+			}
+		}),
+		db.user.findMany({
+			orderBy: [{ status: 'asc' }, { lastName: 'asc' }, { firstName: 'asc' }],
+			select: {
+				id: true,
+				firstName: true,
+				lastName: true,
+				email: true,
+				role: true,
+				status: true,
+				hourlyRateCents: true,
+				createdAt: true,
+				deactivatedAt: true
+			}
+		})
+	]);
 
-	return { users };
+	return { company, users };
 };
 
 const createUserSchema = z.object({
@@ -34,6 +43,16 @@ const createUserSchema = z.object({
 	email: z.string().email('Невалиден имейл адрес'),
 	password: z.string().min(8, 'Паролата трябва да е поне 8 символа'),
 	role: z.enum(['admin', 'manager', 'employee', 'accountant'], { message: 'Изберете роля' })
+});
+
+const moneyField = z
+	.string()
+	.trim()
+	.refine((value) => value.length === 0 || /^\d+([.,]\d{1,2})?$/.test(value), 'Използвайте число с до 2 знака след десетичната запетая.');
+
+const setHourlyRateSchema = z.object({
+	userId: z.string().trim().min(1),
+	hourlyRate: moneyField
 });
 
 export const actions: Actions = {
@@ -51,6 +70,22 @@ export const actions: Actions = {
 		}
 
 		const d = parsed.data;
+		const hourlyRate = String(formData.get('hourlyRate') ?? '');
+		const hourlyRateValidation = moneyField.safeParse(hourlyRate);
+		if (!hourlyRateValidation.success) {
+			return fail(422, {
+				createErrors: { hourlyRate: [hourlyRateValidation.error.issues[0]?.message ?? 'Невалидна стойност.'] },
+				createValues: raw
+			});
+		}
+
+		const hourlyRateCents = parseOptionalMoneyToCents(hourlyRateValidation.data);
+		if (Number.isNaN(hourlyRateCents)) {
+			return fail(422, {
+				createErrors: { hourlyRate: ['Използвайте валидна сума.'] },
+				createValues: raw
+			});
+		}
 
 		const existing = await db.user.findUnique({ where: { email: d.email } });
 		if (existing) {
@@ -70,7 +105,7 @@ export const actions: Actions = {
 
 		await db.user.update({
 			where: { id: result.user.id },
-			data: { role: d.role, firstName: d.firstName, lastName: d.lastName }
+			data: { role: d.role, firstName: d.firstName, lastName: d.lastName, hourlyRateCents }
 		});
 
 		await logAuditEvent({
@@ -78,7 +113,7 @@ export const actions: Actions = {
 			eventType: 'user_created',
 			entityType: 'user',
 			entityId: result.user.id,
-			newValueJson: { email: d.email, role: d.role }
+			newValueJson: { email: d.email, role: d.role, hourlyRateCents }
 		});
 
 		return { createSuccess: true };
@@ -169,5 +204,67 @@ export const actions: Actions = {
 		});
 
 		return { statusSuccess: true };
+	},
+
+	setHourlyRate: async ({ request, locals }) => {
+		if (locals.user?.role !== 'admin') {
+			return fail(403, { hourlyRateError: 'Нямате права.', hourlyRateUserId: '', hourlyRateValue: '' });
+		}
+
+		const formData = await request.formData();
+		const raw = {
+			userId: String(formData.get('userId') ?? ''),
+			hourlyRate: String(formData.get('hourlyRate') ?? '')
+		};
+		const parsed = setHourlyRateSchema.safeParse(raw);
+
+		if (!parsed.success) {
+			return fail(422, {
+				hourlyRateError: parsed.error.flatten().fieldErrors.hourlyRate?.[0] ?? 'Невалидна стойност.',
+				hourlyRateUserId: raw.userId,
+				hourlyRateValue: raw.hourlyRate
+			});
+		}
+
+		const hourlyRateCents = parseOptionalMoneyToCents(parsed.data.hourlyRate);
+		if (Number.isNaN(hourlyRateCents)) {
+			return fail(422, {
+				hourlyRateError: 'Използвайте валидна сума.',
+				hourlyRateUserId: raw.userId,
+				hourlyRateValue: raw.hourlyRate
+			});
+		}
+
+		const target = await db.user.findUnique({
+			where: { id: parsed.data.userId },
+			select: { id: true, hourlyRateCents: true }
+		});
+		if (!target) {
+			return fail(404, {
+				hourlyRateError: 'Потребителят не е намерен.',
+				hourlyRateUserId: raw.userId,
+				hourlyRateValue: raw.hourlyRate
+			});
+		}
+
+		await db.user.update({
+			where: { id: parsed.data.userId },
+			data: { hourlyRateCents }
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'user_hourly_rate_changed',
+			entityType: 'user',
+			entityId: parsed.data.userId,
+			oldValueJson: { hourlyRateCents: target.hourlyRateCents },
+			newValueJson: { hourlyRateCents }
+		});
+
+		return {
+			hourlyRateSuccess: true,
+			hourlyRateUserId: parsed.data.userId,
+			hourlyRateValue: formatMoneyFromCents(hourlyRateCents)
+		};
 	}
 };

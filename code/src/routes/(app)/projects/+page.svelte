@@ -398,7 +398,12 @@
 					{/if}
 
 					{#if data.permissions.canManageProjects}
-						<button type="submit" class="btn-primary">Запази проекта</button>
+						<div class="action-row">
+							<button type="submit" class="btn-primary">Запази проекта</button>
+							<a class="btn-secondary" href={`/projects/${project.id}`}>Задачи и списъци</a>
+						</div>
+					{:else}
+						<a class="btn-secondary" href={`/projects/${project.id}`}>Задачи и списъци</a>
 					{/if}
 				</form>
 			{/if}
@@ -725,6 +730,30 @@
 
 	.btn-primary:hover {
 		background: #1d4ed8;
+	}
+
+	.btn-secondary {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border: 1px solid #cbd5e1;
+		border-radius: 8px;
+		padding: 10px 16px;
+		font-weight: 600;
+		color: #0f172a;
+		background: #fff;
+	}
+
+	.btn-secondary:hover {
+		border-color: #94a3b8;
+		text-decoration: none;
+	}
+
+	.action-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 12px;
+		align-items: center;
 	}
 
 	@media (max-width: 1100px) {

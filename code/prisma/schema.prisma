@@ -23,6 +23,7 @@ model User {
   lastName        String   @default("")
   role            UserRole @default(employee)
   status          UserStatus @default(active)
+  hourlyRateCents Int?
   deactivatedAt   DateTime?
 
   sessions        Session[]
@@ -30,6 +31,7 @@ model User {
   auditEvents     AuditEvent[] @relation("AuditActor")
   managedProjects Project[]    @relation("ProjectPrimaryManager")
   projectMemberships ProjectMember[]
+  createdTasks    Task[]       @relation("TaskCreatedBy")
 
   @@map("user")
 }
@@ -143,6 +145,25 @@ enum ProjectStatus {
   cancelled
 }
 
+enum TaskStatus {
+  todo
+  in_progress
+  done
+  cancelled
+}
+
+enum TaskPriority {
+  low
+  medium
+  high
+}
+
+enum TaskBillingType {
+  hourly
+  flat_fee
+  non_billable
+}
+
 model Client {
   id                String       @id @default(cuid())
   companyId         String
@@ -194,6 +215,7 @@ model Project {
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
   members              ProjectMember[]
+  taskLists            TaskList[]
 
   @@unique([clientId, name])
   @@map("project")
@@ -209,6 +231,41 @@ model ProjectMember {
 
   @@unique([projectId, userId])
   @@map("project_member")
+}
+
+model TaskList {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  isArchived  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tasks       Task[]
+
+  @@unique([projectId, name])
+  @@map("task_list")
+}
+
+model Task {
+  id                 String          @id @default(cuid())
+  taskListId         String
+  taskList           TaskList        @relation(fields: [taskListId], references: [id], onDelete: Cascade)
+  title              String
+  description        String?
+  status             TaskStatus      @default(todo)
+  priority           TaskPriority    @default(medium)
+  deadlineDate       DateTime?       @db.Date
+  billingType        TaskBillingType @default(hourly)
+  flatFeeAmountCents Int?
+  createdByUserId    String
+  createdByUser      User            @relation("TaskCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  @@index([taskListId, status])
+  @@map("task")
 }
 
 model ExpenseCategory {

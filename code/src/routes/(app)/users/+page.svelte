@@ -28,6 +28,18 @@
 		return (form as any)?.roleUserId === userId ? (form as any)?.roleError : null;
 	}
 
+	function hourlyRateValue(userId: string, currentValue: number | null) {
+		if ((form as any)?.hourlyRateUserId === userId) {
+			return (form as any)?.hourlyRateValue ?? '';
+		}
+
+		return currentValue == null ? '' : (currentValue / 100).toFixed(2);
+	}
+
+	function hourlyRateError(userId: string) {
+		return (form as any)?.hourlyRateUserId === userId ? (form as any)?.hourlyRateError : null;
+	}
+
 	$effect(() => {
 		if ((form as any)?.createSuccess) showCreateForm = false;
 	});
@@ -87,6 +99,11 @@
 				<input id="password" name="password" type="password" minlength="8" required />
 				{#if fieldError('password')}<span class="error">{fieldError('password')}</span>{/if}
 			</div>
+			<div class="field">
+				<label for="hourlyRate">Часова ставка ({data.company?.currency ?? 'EUR'})</label>
+				<input id="hourlyRate" name="hourlyRate" type="text" inputmode="decimal" value={val('hourlyRate')} />
+				{#if fieldError('hourlyRate')}<span class="error">{fieldError('hourlyRate')}</span>{/if}
+			</div>
 			<button type="submit" class="btn-primary">Създай потребител</button>
 		</form>
 	</div>
@@ -99,6 +116,7 @@
 				<th>Ime</th>
 				<th>Имейл</th>
 				<th>Роля</th>
+				<th>Часова ставка</th>
 				<th>Статус</th>
 				<th>Действия</th>
 			</tr>
@@ -127,6 +145,25 @@
 						{/if}
 					</td>
 					<td>
+						<form method="POST" action="?/setHourlyRate" class="rate-form">
+							<input type="hidden" name="userId" value={u.id} />
+							<div class="rate-input-row">
+								<input
+									name="hourlyRate"
+									type="text"
+									inputmode="decimal"
+									value={hourlyRateValue(u.id, u.hourlyRateCents)}
+									aria-invalid={hourlyRateError(u.id) ? 'true' : undefined}
+								/>
+								<span class="currency-tag">{data.company?.currency ?? 'EUR'}</span>
+								<button type="submit" class="btn-sm btn-primary-subtle">Запази</button>
+							</div>
+						</form>
+						{#if hourlyRateError(u.id)}
+							<div class="error">{hourlyRateError(u.id)}</div>
+						{/if}
+					</td>
+					<td>
 						<span class="badge" class:active={u.status === 'active'} class:disabled={u.status === 'inactive'}>
 							{u.status === 'active' ? 'Активен' : 'Неактивен'}
 						</span>
@@ -149,7 +186,7 @@
 				</tr>
 			{/each}
 			{#if data.users.length === 0}
-				<tr><td colspan="5" style="text-align:center;color:#64748b;padding:24px">Няма потребители</td></tr>
+				<tr><td colspan="6" style="text-align:center;color:#64748b;padding:24px">Няма потребители</td></tr>
 			{/if}
 		</tbody>
 	</table>
@@ -298,6 +335,27 @@
 		display: inline;
 	}
 
+	.rate-form {
+		display: grid;
+		gap: 6px;
+	}
+
+	.rate-input-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.rate-input-row input {
+		min-width: 96px;
+	}
+
+	.currency-tag {
+		font-size: 0.8125rem;
+		color: #64748b;
+		white-space: nowrap;
+	}
+
 	.btn-primary {
 		padding: 9px 18px;
 		background: #2563eb;
@@ -341,5 +399,14 @@
 
 	.btn-success:hover {
 		background: #bbf7d0;
+	}
+
+	.btn-primary-subtle {
+		background: #dbeafe;
+		color: #1d4ed8;
+	}
+
+	.btn-primary-subtle:hover {
+		background: #bfdbfe;
 	}
 </style>
