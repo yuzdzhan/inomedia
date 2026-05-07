@@ -12,529 +12,183 @@
 		return ((profitability / revenue) * 100).toFixed(1) + '%';
 	}
 
-	function profitClass(cents: number): string {
-		if (cents > 0) return 'profit-positive';
-		if (cents < 0) return 'profit-negative';
-		return '';
+	function profitColor(cents: number): string {
+		if (cents > 0) return 'var(--success)';
+		if (cents < 0) return 'var(--danger)';
+		return 'var(--text)';
 	}
 </script>
 
 <svelte:head>
-	<title>Отчети: Рентабилност</title>
+	<title>Отчети: Рентабилност – Иномедия</title>
 </svelte:head>
 
 <div class="page-header">
-	<h1>Отчети: Рентабилност</h1>
+	<div>
+		<h1 class="page-title">Отчети: Рентабилност</h1>
+		<p class="page-sub">Приход срещу разход на ниво компания, клиент или проект</p>
+	</div>
 </div>
 
 <!-- Scope tabs -->
-<div class="scope-tabs">
-	<a
-		href="/reports/profitability?scope=company&dateFrom={data.filters.dateFrom}&dateTo={data.filters.dateTo}"
-		class="scope-tab"
-		class:active={data.scope === 'company'}
-	>
-		Компания
-	</a>
-	<a
-		href="/reports/profitability?scope=client&dateFrom={data.filters.dateFrom}&dateTo={data.filters.dateTo}"
-		class="scope-tab"
-		class:active={data.scope === 'client'}
-	>
-		По клиент
-	</a>
-	<a
-		href="/reports/profitability?scope=project&dateFrom={data.filters.dateFrom}&dateTo={data.filters.dateTo}"
-		class="scope-tab"
-		class:active={data.scope === 'project'}
-	>
-		По проект
-	</a>
+<div class="tabs" style="margin-bottom:16px;">
+	<a href="/reports/profitability?scope=company&dateFrom={data.filters.dateFrom}&dateTo={data.filters.dateTo}" class="tab" class:active={data.scope === 'company'}>Компания</a>
+	<a href="/reports/profitability?scope=client&dateFrom={data.filters.dateFrom}&dateTo={data.filters.dateTo}" class="tab" class:active={data.scope === 'client'}>По клиент</a>
+	<a href="/reports/profitability?scope=project&dateFrom={data.filters.dateFrom}&dateTo={data.filters.dateTo}" class="tab" class:active={data.scope === 'project'}>По проект</a>
 </div>
 
 <!-- Filter bar -->
-<form method="GET" class="filter-bar">
+<form method="GET" style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-bottom:16px;">
 	<input type="hidden" name="scope" value={data.filters.scope} />
-	<div class="filter-group">
-		<label for="dateFrom">От дата</label>
-		<input
-			id="dateFrom"
-			type="date"
-			name="dateFrom"
-			value={data.filters.dateFrom}
-			class="input-sm"
-		/>
-	</div>
-	<div class="filter-group">
-		<label for="dateTo">До дата</label>
-		<input
-			id="dateTo"
-			type="date"
-			name="dateTo"
-			value={data.filters.dateTo}
-			class="input-sm"
-		/>
-	</div>
+	<input class="input" type="date" name="dateFrom" value={data.filters.dateFrom} style="width:140px;" title="От дата" />
+	<input class="input" type="date" name="dateTo" value={data.filters.dateTo} style="width:140px;" title="До дата" />
 	{#if data.scope === 'project' || data.scope === 'company'}
-		<div class="filter-group">
-			<label for="clientId">Клиент</label>
-			<select id="clientId" name="clientId" class="input-sm">
-				<option value="">Всички клиенти</option>
-				{#each data.clients as client}
-					<option value={client.id} selected={data.filters.clientId === client.id}
-						>{client.legalName}</option
-					>
-				{/each}
-			</select>
-		</div>
+		<select class="select" name="clientId" style="width:auto;">
+			<option value="">Всички клиенти</option>
+			{#each data.clients as client}
+				<option value={client.id} selected={data.filters.clientId === client.id}>{client.legalName}</option>
+			{/each}
+		</select>
 	{/if}
-	<div class="filter-actions">
-		<button type="submit" class="btn btn-primary">Приложи</button>
-		<a href="/reports/profitability?scope={data.filters.scope}" class="btn btn-secondary"
-			>Изчисти</a
-		>
-	</div>
+	<button type="submit" class="btn btn-secondary btn-sm">Приложи</button>
+	<a href="/reports/profitability?scope={data.filters.scope}" class="btn btn-ghost btn-sm">Изчисти</a>
 </form>
 
-<!-- ─── Company view ──────────────────────────────────────────────────────── -->
+<!-- Company view -->
 {#if data.scope === 'company' && data.company}
 	{@const c = data.company}
-	<div class="summary-grid">
-		<div class="summary-card summary-card--revenue">
-			<div class="summary-label">Издадени приходи</div>
-			<div class="summary-value">{formatCents(c.revenueCents)}</div>
-			<div class="summary-hint">Брутна сума по издадени фактури</div>
+	<div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px;">
+		<div class="stat" style="padding:14px;">
+			<div class="stat-label">Издадени приходи</div>
+			<div class="amount" style="font-size:20px; font-weight:500;">{formatCents(c.revenueCents)}</div>
+			<div class="muted" style="font-size:11px;">Брутна сума по издадени фактури</div>
 		</div>
-		<div class="summary-card summary-card--cost">
-			<div class="summary-label">Разходи за труд</div>
-			<div class="summary-value">{formatCents(c.laborCostCents)}</div>
-			<div class="summary-hint">По снапшот себестойности на отработените часове</div>
+		<div class="stat" style="padding:14px;">
+			<div class="stat-label">Разходи за труд</div>
+			<div class="amount" style="font-size:20px; font-weight:500;">{formatCents(c.laborCostCents)}</div>
+			<div class="muted" style="font-size:11px;">По снапшот себестойности</div>
 		</div>
-		<div class="summary-card summary-card--cost">
-			<div class="summary-label">Преки разходи</div>
-			<div class="summary-value">{formatCents(c.directExpCents)}</div>
-			<div class="summary-hint">Платени разходи, свързани с клиент или проект</div>
+		<div class="stat" style="padding:14px;">
+			<div class="stat-label">Преки разходи</div>
+			<div class="amount" style="font-size:20px; font-weight:500;">{formatCents(c.directExpCents)}</div>
+			<div class="muted" style="font-size:11px;">Платени разходи, свързани с клиент или проект</div>
 		</div>
-		<div class="summary-card {profitClass(c.profitabilityCents)}">
-			<div class="summary-label">Рентабилност</div>
-			<div class="summary-value">{formatCents(c.profitabilityCents)}</div>
-			<div class="summary-hint">Марж: {margin(c.profitabilityCents, c.revenueCents)}</div>
+		<div class="stat" style="padding:14px;">
+			<div class="stat-label">Рентабилност</div>
+			<div class="amount" style="font-size:20px; font-weight:500; color:{profitColor(c.profitabilityCents)};">{formatCents(c.profitabilityCents)}</div>
+			<div class="muted" style="font-size:11px;">Марж: {margin(c.profitabilityCents, c.revenueCents)}</div>
 		</div>
 	</div>
-
 	{#if !data.isManager}
-		<div class="overhead-note">
-			<span class="overhead-icon">ℹ</span>
-			Режийните разходи ({formatCents(c.overheadCents)}) не са включени в рентабилността — показват
-			се само за информация.
+		<div style="display:flex; align-items:flex-start; gap:8px; padding:10px 14px; background:var(--accent-subtle); border:1px solid var(--border); border-radius:var(--r-md); font-size:13px; color:var(--accent); margin-bottom:16px;">
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;margin-top:1px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+			<span>Режийните разходи ({formatCents(c.overheadCents)}) не са включени в рентабилността — показват се само за информация.</span>
 		</div>
 	{/if}
 {/if}
 
-<!-- ─── Per-client view ───────────────────────────────────────────────────── -->
+<!-- Client view -->
 {#if data.scope === 'client' && data.clientRows}
 	{@const totals = data.clientTotals}
 	{#if !data.isManager && totals && totals.overheadCents > 0}
-		<div class="overhead-note">
-			<span class="overhead-icon">ℹ</span>
-			Режийните разходи ({formatCents(totals.overheadCents)}) не са включени в проектната рентабилност.
+		<div style="display:flex; align-items:flex-start; gap:8px; padding:10px 14px; background:var(--accent-subtle); border:1px solid var(--border); border-radius:var(--r-md); font-size:13px; color:var(--accent); margin-bottom:16px;">
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;margin-top:1px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+			<span>Режийните разходи ({formatCents(totals.overheadCents)}) не са включени в проектната рентабилност.</span>
 		</div>
 	{/if}
-
-	{#if data.clientRows.length === 0}
-		<p class="empty-state">Няма данни за избрания период.</p>
-	{:else}
-		<div class="table-wrap">
-			<table class="data-table">
-				<thead>
-					<tr>
-						<th>Клиент</th>
-						<th class="text-right">Приходи</th>
-						<th class="text-right">Разходи труд</th>
-						<th class="text-right">Преки разходи</th>
-						<th class="text-right">Рентабилност</th>
-						<th class="text-right">Марж</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each data.clientRows as row}
-						<tr>
-							<td>{row.legalName}</td>
-							<td class="text-right">{formatCents(row.revenueCents)}</td>
-							<td class="text-right">{formatCents(row.laborCostCents)}</td>
-							<td class="text-right">{formatCents(row.directExpCents)}</td>
-							<td class="text-right {profitClass(row.profitabilityCents)}">
-								{formatCents(row.profitabilityCents)}
-							</td>
-							<td class="text-right {profitClass(row.profitabilityCents)}">
-								{margin(row.profitabilityCents, row.revenueCents)}
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-				{#if totals && data.clientRows.length > 1}
-					<tfoot>
-						<tr class="totals-row">
-							<td><strong>Общо</strong></td>
-							<td class="text-right"><strong>{formatCents(totals.revenueCents)}</strong></td>
-							<td class="text-right"><strong>{formatCents(totals.laborCostCents)}</strong></td>
-							<td class="text-right"><strong>{formatCents(totals.directExpCents)}</strong></td>
-							<td class="text-right {profitClass(totals.profitabilityCents)}">
-								<strong>{formatCents(totals.profitabilityCents)}</strong>
-							</td>
-							<td class="text-right {profitClass(totals.profitabilityCents)}">
-								<strong>{margin(totals.profitabilityCents, totals.revenueCents)}</strong>
-							</td>
-						</tr>
-					</tfoot>
+	<div class="card">
+		<table class="tbl">
+			<thead>
+				<tr>
+					<th>Клиент</th>
+					<th style="text-align:right;">Приходи</th>
+					<th style="text-align:right;">Разходи труд</th>
+					<th style="text-align:right;">Преки разходи</th>
+					<th style="text-align:right;">Рентабилност</th>
+					<th style="text-align:right;">Марж</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#if data.clientRows.length === 0}
+					<tr><td colspan="6" style="text-align:center; padding:32px 16px; color:var(--text-muted);">Няма данни за избрания период.</td></tr>
 				{/if}
-			</table>
-		</div>
-	{/if}
+				{#each data.clientRows as row}
+					<tr>
+						<td style="font-size:13px;">{row.legalName}</td>
+						<td class="amount" style="text-align:right;">{formatCents(row.revenueCents)}</td>
+						<td class="amount muted" style="text-align:right;">{formatCents(row.laborCostCents)}</td>
+						<td class="amount muted" style="text-align:right;">{formatCents(row.directExpCents)}</td>
+						<td class="amount" style="text-align:right; font-weight:600; color:{profitColor(row.profitabilityCents)};">{formatCents(row.profitabilityCents)}</td>
+						<td class="amount" style="text-align:right; color:{profitColor(row.profitabilityCents)};">{margin(row.profitabilityCents, row.revenueCents)}</td>
+					</tr>
+				{/each}
+			</tbody>
+			{#if totals && data.clientRows.length > 1}
+				<tfoot>
+					<tr style="border-top:2px solid var(--border); background:var(--surface);">
+						<td style="font-size:13px; font-weight:600;">Общо</td>
+						<td class="amount" style="text-align:right; font-weight:600;">{formatCents(totals.revenueCents)}</td>
+						<td class="amount muted" style="text-align:right; font-weight:600;">{formatCents(totals.laborCostCents)}</td>
+						<td class="amount muted" style="text-align:right; font-weight:600;">{formatCents(totals.directExpCents)}</td>
+						<td class="amount" style="text-align:right; font-weight:700; color:{profitColor(totals.profitabilityCents)};">{formatCents(totals.profitabilityCents)}</td>
+						<td class="amount" style="text-align:right; color:{profitColor(totals.profitabilityCents)};">{margin(totals.profitabilityCents, totals.revenueCents)}</td>
+					</tr>
+				</tfoot>
+			{/if}
+		</table>
+	</div>
 {/if}
 
-<!-- ─── Per-project view ──────────────────────────────────────────────────── -->
+<!-- Project view -->
 {#if data.scope === 'project' && data.projectRows}
 	{@const totals = data.projectTotals}
 	{#if !data.isManager && totals && totals.overheadCents > 0}
-		<div class="overhead-note">
-			<span class="overhead-icon">ℹ</span>
-			Режийните разходи ({formatCents(totals.overheadCents)}) не са включени в проектната рентабилност.
+		<div style="display:flex; align-items:flex-start; gap:8px; padding:10px 14px; background:var(--accent-subtle); border:1px solid var(--border); border-radius:var(--r-md); font-size:13px; color:var(--accent); margin-bottom:16px;">
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;margin-top:1px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+			<span>Режийните разходи ({formatCents(totals.overheadCents)}) не са включени в проектната рентабилност.</span>
 		</div>
 	{/if}
-
-	{#if data.projectRows.length === 0}
-		<p class="empty-state">Няма данни за избрания период.</p>
-	{:else}
-		<div class="table-wrap">
-			<table class="data-table">
-				<thead>
-					<tr>
-						<th>Проект</th>
-						<th>Клиент</th>
-						<th class="text-right">Приходи</th>
-						<th class="text-right">Разходи труд</th>
-						<th class="text-right">Преки разходи</th>
-						<th class="text-right">Рентабилност</th>
-						<th class="text-right">Марж</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each data.projectRows as row}
-						<tr>
-							<td>{row.projectName}</td>
-							<td class="text-muted">{row.clientName}</td>
-							<td class="text-right">{formatCents(row.revenueCents)}</td>
-							<td class="text-right">{formatCents(row.laborCostCents)}</td>
-							<td class="text-right">{formatCents(row.directExpCents)}</td>
-							<td class="text-right {profitClass(row.profitabilityCents)}">
-								{formatCents(row.profitabilityCents)}
-							</td>
-							<td class="text-right {profitClass(row.profitabilityCents)}">
-								{margin(row.profitabilityCents, row.revenueCents)}
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-				{#if totals && data.projectRows.length > 1}
-					<tfoot>
-						<tr class="totals-row">
-							<td colspan="2"><strong>Общо</strong></td>
-							<td class="text-right"><strong>{formatCents(totals.revenueCents)}</strong></td>
-							<td class="text-right"><strong>{formatCents(totals.laborCostCents)}</strong></td>
-							<td class="text-right"><strong>{formatCents(totals.directExpCents)}</strong></td>
-							<td class="text-right {profitClass(totals.profitabilityCents)}">
-								<strong>{formatCents(totals.profitabilityCents)}</strong>
-							</td>
-							<td class="text-right {profitClass(totals.profitabilityCents)}">
-								<strong>{margin(totals.profitabilityCents, totals.revenueCents)}</strong>
-							</td>
-						</tr>
-					</tfoot>
+	<div class="card">
+		<table class="tbl">
+			<thead>
+				<tr>
+					<th>Проект</th>
+					<th>Клиент</th>
+					<th style="text-align:right;">Приходи</th>
+					<th style="text-align:right;">Разходи труд</th>
+					<th style="text-align:right;">Преки разходи</th>
+					<th style="text-align:right;">Рентабилност</th>
+					<th style="text-align:right;">Марж</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#if data.projectRows.length === 0}
+					<tr><td colspan="7" style="text-align:center; padding:32px 16px; color:var(--text-muted);">Няма данни за избрания период.</td></tr>
 				{/if}
-			</table>
-		</div>
-	{/if}
+				{#each data.projectRows as row}
+					<tr>
+						<td style="font-size:13px; font-weight:500;">{row.projectName}</td>
+						<td class="muted" style="font-size:12px;">{row.clientName}</td>
+						<td class="amount" style="text-align:right;">{formatCents(row.revenueCents)}</td>
+						<td class="amount muted" style="text-align:right;">{formatCents(row.laborCostCents)}</td>
+						<td class="amount muted" style="text-align:right;">{formatCents(row.directExpCents)}</td>
+						<td class="amount" style="text-align:right; font-weight:600; color:{profitColor(row.profitabilityCents)};">{formatCents(row.profitabilityCents)}</td>
+						<td class="amount" style="text-align:right; color:{profitColor(row.profitabilityCents)};">{margin(row.profitabilityCents, row.revenueCents)}</td>
+					</tr>
+				{/each}
+			</tbody>
+			{#if totals && data.projectRows.length > 1}
+				<tfoot>
+					<tr style="border-top:2px solid var(--border); background:var(--surface);">
+						<td colspan="2" style="font-size:13px; font-weight:600;">Общо</td>
+						<td class="amount" style="text-align:right; font-weight:600;">{formatCents(totals.revenueCents)}</td>
+						<td class="amount muted" style="text-align:right; font-weight:600;">{formatCents(totals.laborCostCents)}</td>
+						<td class="amount muted" style="text-align:right; font-weight:600;">{formatCents(totals.directExpCents)}</td>
+						<td class="amount" style="text-align:right; font-weight:700; color:{profitColor(totals.profitabilityCents)};">{formatCents(totals.profitabilityCents)}</td>
+						<td class="amount" style="text-align:right; color:{profitColor(totals.profitabilityCents)};">{margin(totals.profitabilityCents, totals.revenueCents)}</td>
+					</tr>
+				</tfoot>
+			{/if}
+		</table>
+	</div>
 {/if}
-
-<style>
-	.page-header {
-		margin-bottom: 20px;
-	}
-
-	.page-header h1 {
-		font-size: 1.5rem;
-		font-weight: 700;
-		color: #0f172a;
-		margin: 0;
-	}
-
-	/* Scope tabs */
-	.scope-tabs {
-		display: flex;
-		gap: 4px;
-		margin-bottom: 20px;
-		border-bottom: 2px solid #e2e8f0;
-	}
-
-	.scope-tab {
-		padding: 8px 18px;
-		font-size: 0.9375rem;
-		font-weight: 500;
-		color: #64748b;
-		text-decoration: none;
-		border-bottom: 2px solid transparent;
-		margin-bottom: -2px;
-		transition: color 0.15s, border-color 0.15s;
-	}
-
-	.scope-tab:hover {
-		color: #1e293b;
-	}
-
-	.scope-tab.active {
-		color: #3b82f6;
-		border-bottom-color: #3b82f6;
-	}
-
-	/* Filter bar */
-	.filter-bar {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 16px;
-		align-items: flex-end;
-		background: #f8fafc;
-		border: 1px solid #e2e8f0;
-		border-radius: 8px;
-		padding: 16px;
-		margin-bottom: 24px;
-	}
-
-	.filter-group {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-	}
-
-	.filter-group label {
-		font-size: 0.8125rem;
-		font-weight: 500;
-		color: #475569;
-	}
-
-	.filter-actions {
-		display: flex;
-		gap: 8px;
-		align-items: flex-end;
-	}
-
-	.input-sm {
-		height: 34px;
-		padding: 0 10px;
-		border: 1px solid #cbd5e1;
-		border-radius: 6px;
-		font-size: 0.875rem;
-		font-family: inherit;
-		color: #0f172a;
-		background: #fff;
-		min-width: 140px;
-	}
-
-	.input-sm:focus {
-		outline: none;
-		border-color: #3b82f6;
-		box-shadow: 0 0 0 2px #bfdbfe;
-	}
-
-	/* Buttons */
-	.btn {
-		display: inline-flex;
-		align-items: center;
-		height: 34px;
-		padding: 0 14px;
-		border-radius: 6px;
-		font-size: 0.875rem;
-		font-weight: 500;
-		font-family: inherit;
-		cursor: pointer;
-		border: 1px solid transparent;
-		text-decoration: none;
-		transition: background 0.15s, border-color 0.15s, color 0.15s;
-	}
-
-	.btn-primary {
-		background: #3b82f6;
-		color: #fff;
-		border-color: #3b82f6;
-	}
-
-	.btn-primary:hover {
-		background: #2563eb;
-		border-color: #2563eb;
-	}
-
-	.btn-secondary {
-		background: #fff;
-		color: #374151;
-		border-color: #d1d5db;
-	}
-
-	.btn-secondary:hover {
-		background: #f9fafb;
-		border-color: #9ca3af;
-	}
-
-	/* Summary cards */
-	.summary-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-		gap: 16px;
-		margin-bottom: 24px;
-	}
-
-	.summary-card {
-		background: #fff;
-		border: 1px solid #e2e8f0;
-		border-radius: 10px;
-		padding: 20px;
-	}
-
-	.summary-card--revenue {
-		border-color: #93c5fd;
-		background: #eff6ff;
-	}
-
-	.summary-card--cost {
-		border-color: #fca5a5;
-		background: #fef2f2;
-	}
-
-	.profit-positive {
-		border-color: #86efac;
-		background: #f0fdf4;
-		color: #166534;
-	}
-
-	.profit-negative {
-		border-color: #fca5a5;
-		background: #fef2f2;
-		color: #991b1b;
-	}
-
-	.summary-label {
-		font-size: 0.8125rem;
-		font-weight: 500;
-		color: #64748b;
-		margin-bottom: 6px;
-		text-transform: uppercase;
-		letter-spacing: 0.03em;
-	}
-
-	.summary-value {
-		font-size: 1.5rem;
-		font-weight: 700;
-		color: #0f172a;
-		margin-bottom: 4px;
-	}
-
-	.summary-hint {
-		font-size: 0.75rem;
-		color: #94a3b8;
-	}
-
-	/* Overhead note */
-	.overhead-note {
-		display: flex;
-		align-items: flex-start;
-		gap: 8px;
-		background: #fffbeb;
-		border: 1px solid #fcd34d;
-		border-radius: 8px;
-		padding: 12px 16px;
-		font-size: 0.875rem;
-		color: #92400e;
-		margin-bottom: 24px;
-	}
-
-	.overhead-icon {
-		font-style: normal;
-		font-weight: 700;
-		flex-shrink: 0;
-	}
-
-	/* Tables */
-	.table-wrap {
-		overflow-x: auto;
-		border: 1px solid #e2e8f0;
-		border-radius: 8px;
-		margin-bottom: 32px;
-	}
-
-	.data-table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 0.875rem;
-	}
-
-	.data-table th {
-		background: #f8fafc;
-		padding: 10px 14px;
-		text-align: left;
-		font-size: 0.8125rem;
-		font-weight: 600;
-		color: #475569;
-		border-bottom: 1px solid #e2e8f0;
-		white-space: nowrap;
-	}
-
-	.data-table td {
-		padding: 10px 14px;
-		border-bottom: 1px solid #f1f5f9;
-		color: #1e293b;
-		vertical-align: middle;
-	}
-
-	.data-table tbody tr:last-child td {
-		border-bottom: none;
-	}
-
-	.data-table tbody tr:hover {
-		background: #f8fafc;
-	}
-
-	.totals-row td {
-		background: #f8fafc;
-		border-top: 2px solid #e2e8f0;
-		border-bottom: none;
-	}
-
-	.text-right {
-		text-align: right;
-	}
-
-	.text-muted {
-		color: #64748b;
-		font-size: 0.8125rem;
-	}
-
-	.empty-state {
-		color: #94a3b8;
-		font-size: 0.9375rem;
-		padding: 20px 0;
-	}
-
-	/* Profit coloring inside tables */
-	td.profit-positive {
-		color: #166534;
-		font-weight: 600;
-		background: transparent;
-		border: none;
-	}
-
-	td.profit-negative {
-		color: #991b1b;
-		font-weight: 600;
-		background: transparent;
-		border: none;
-	}
-</style>

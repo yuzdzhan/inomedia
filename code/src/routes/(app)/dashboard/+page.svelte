@@ -1,24 +1,30 @@
 <script lang="ts">
 	import type { PageData } from './$types';
+	import Icon from '$lib/components/Icon.svelte';
 
 	let { data }: { data: PageData } = $props();
 
-	const dateFormatter = new Intl.DateTimeFormat('bg-BG', {
-		day: '2-digit',
-		month: 'short',
-		year: 'numeric'
-	});
+	const today = new Date();
+	const dayNames = ['неделя', 'понеделник', 'вторник', 'сряда', 'четвъртък', 'петък', 'събота'];
+	const monthNames = ['яну', 'фев', 'март', 'апр', 'май', 'юни', 'юли', 'авг', 'сеп', 'окт', 'ное', 'дек'];
 
-	function formatDate(date: Date | string | null | undefined): string {
+	function fmtMoney(cents: number): string {
+		return (cents / 100).toLocaleString('bg-BG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+	}
+
+	function fmtDate(date: Date | string | null | undefined): string {
 		if (!date) return '—';
-		return dateFormatter.format(new Date(date));
+		const d = new Date(date);
+		return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
 	}
 
-	function formatAmount(cents: number): string {
-		return (cents / 100).toFixed(2) + ' EUR';
+	function fmtDateShort(date: Date | string | null | undefined): string {
+		if (!date) return '—';
+		const d = new Date(date);
+		return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`;
 	}
 
-	function formatDuration(minutes: number | null | undefined): string {
+	function fmtDuration(minutes: number | null | undefined): string {
 		if (!minutes) return '0м';
 		const h = Math.floor(minutes / 60);
 		const m = minutes % 60;
@@ -27,451 +33,433 @@
 		return `${h}ч ${m}м`;
 	}
 
-	const today = new Date();
-	today.setHours(0, 0, 0, 0);
-
-	function isOverdue(deadline: Date | string | null | undefined): boolean {
-		if (!deadline) return false;
-		return new Date(deadline) < today;
+	function isOverdue(date: Date | string | null | undefined): boolean {
+		if (!date) return false;
+		return new Date(date) < today;
 	}
 
 	const priorityLabels: Record<string, string> = {
-		low: 'Ниски',
-		medium: 'Средни',
-		high: 'Висок'
+		low: 'Нисък', medium: 'Среден', high: 'Висок'
 	};
 
 	const statusLabels: Record<string, string> = {
-		todo: 'Чакащо',
-		in_progress: 'В процес',
-		issued: 'Издадена',
-		partially_paid: 'Частично платена',
-		overdue: 'Просрочена'
+		todo: 'Чакащо', in_progress: 'В процес', issued: 'Издадена',
+		partially_paid: 'Частично', overdue: 'Просрочена', draft: 'Чернова'
 	};
 
-	const containerTypeLabels: Record<string, string> = {
-		bank: 'Банка',
-		cashbox: 'Каса'
-	};
-
-	const ledgerEntryTypeLabels: Record<string, string> = {
-		invoice_payment: 'Плащане по фактура',
-		standalone_income: 'Самостоятелен приход',
-		expense_payment: 'Плащане на разход',
-		generic_credit: 'Кредит',
-		generic_debit: 'Дебит',
-		transfer_out: 'Трансфер изходящ',
-		transfer_in: 'Трансфер входящ'
-	};
+	function auditEventLabel(eventType: string): string {
+		const labels: Record<string, string> = {
+			invoice_draft_created: 'създаде чернова на фактура',
+			invoice_issued: 'издаде фактура',
+			invoice_payment_recorded: 'записа плащане по фактура',
+			project_created: 'създаде проект',
+			task_time_log_created: 'логна работно време по',
+			task_time_log_deleted: 'изтри запис за работно време',
+			bank_import: 'импортира банково извлечение',
+			expense_created: 'добави разход',
+			user_created: 'добави потребител',
+			login_success: 'влезе в системата'
+		};
+		return labels[eventType] ?? eventType.replace(/_/g, ' ');
+	}
 </script>
 
 <svelte:head>
 	<title>Начало – Иномедия</title>
 </svelte:head>
 
-<h1>Добре дошли!</h1>
-<p style="color: #64748b; margin-top: 8px; margin-bottom: 24px;">Системата е активна и готова за работа.</p>
-
-{#if data.role === 'employee'}
-	<!-- Employee dashboard -->
-	<div class="stat-grid">
-		<div class="stat-card {data.overdueTasks > 0 ? 'danger' : ''}">
-			<div class="stat-value">{data.overdueTasks}</div>
-			<div class="stat-label">Просрочени задачи</div>
-		</div>
-		<div class="stat-card">
-			<div class="stat-value">{data.uninvoicedTimeLogs._count}</div>
-			<div class="stat-label">Незафактурирани записа</div>
-		</div>
-		<div class="stat-card">
-			<div class="stat-value">{formatDuration(data.uninvoicedTimeLogs._sum.durationMinutes)}</div>
-			<div class="stat-label">Незафактурирано работно време</div>
+{#if data.role === 'admin'}
+	<!-- ── Admin dashboard ─────────────────────────────────────────────────── -->
+	<div class="page-header">
+		<div>
+			<h1 class="page-title">Добре дошъл, {data.firstName}</h1>
+			<p class="page-sub">Преглед на дейността · {dayNames[today.getDay()]}, {String(today.getDate()).padStart(2,'0')} {monthNames[today.getMonth()]} {today.getFullYear()}</p>
 		</div>
 	</div>
 
-	<section class="section">
-		<h2>Моите задачи</h2>
-		{#if data.assignedTasks.length === 0}
-			<p class="empty-state">Няма назначени задачи в момента.</p>
-		{:else}
-			<div class="table-wrap">
-				<table>
-					<thead>
-						<tr>
-							<th>Задача</th>
-							<th>Проект</th>
-							<th>Приоритет</th>
-							<th>Краен срок</th>
-							<th>Статус</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each data.assignedTasks as task}
-							<tr>
-								<td>
-									<a href="/projects/{task.taskList.projectId}">{task.title}</a>
-								</td>
-								<td>{task.taskList.project.name}</td>
-								<td>{priorityLabels[task.priority] ?? task.priority}</td>
-								<td>
-									{#if task.deadlineDate}
-										<span class={isOverdue(task.deadlineDate) ? 'text-danger' : ''}>
-											{formatDate(task.deadlineDate)}
-											{#if isOverdue(task.deadlineDate)}&nbsp;⚠{/if}
-										</span>
-									{:else}
-										—
-									{/if}
-								</td>
-								<td>{statusLabels[task.status] ?? task.status}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
+	<!-- Stats strip -->
+	<div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:24px;">
+		<div class="stat" style="padding:14px;">
+			<div class="stat-label">Незафактурирано</div>
+			<div class="stat-value amount">—</div>
+			<div class="stat-delta">по клиенти</div>
+		</div>
+		<div class="stat" style="padding:14px;">
+			<div class="stat-label">Постъпления / месец</div>
+			<div class="stat-value amount">{fmtMoney(data.monthlyIncomeCents)}</div>
+			<div class="stat-delta">текущ месец</div>
+		</div>
+		<div class="stat" style="padding:14px;">
+			<div class="stat-label">Просрочени фактури</div>
+			<div class="stat-value amount" style={data.overdueAmountCents > 0 ? 'color:var(--danger)' : ''}>{fmtMoney(data.overdueAmountCents)}</div>
+			<div class="stat-delta">{data.unpaidInvoices.filter(i => i.status === 'overdue').length} фактури</div>
+		</div>
+		<div class="stat" style="padding:14px;">
+			<div class="stat-label">Касов баланс</div>
+			<div class="stat-value amount">{fmtMoney(data.cashBalanceCents)}</div>
+			<div class="stat-delta">{data.balances.map(b => `${b.containerType === 'bank' ? 'Банка' : 'Каса'} ${fmtMoney(b.balance)}`).join(' · ') || 'Без контейнери'}</div>
+		</div>
+	</div>
+
+	<!-- 2-col grid row 1 -->
+	<div style="display:grid; grid-template-columns:1.4fr 1fr; gap:16px; margin-bottom:16px;">
+		<!-- Active projects -->
+		<div class="card">
+			<div class="card-header">
+				<div>
+					<h3 class="card-title">Активни проекти</h3>
+					<div class="card-sub">{data.activeProjects.length} проекта</div>
+				</div>
+				<a href="/projects" class="btn btn-ghost btn-sm">Виж всички <Icon name="chevron-right" size={12}/></a>
 			</div>
-		{/if}
-	</section>
+			<table class="tbl">
+				<thead>
+					<tr>
+						<th style="width:40%">Проект</th>
+						<th>Клиент</th>
+						<th style="width:30%">Бюджет</th>
+						<th>Статус</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each data.activeProjects as p}
+						<tr>
+							<td>
+								<a href="/projects/{p.id}" style="font-weight:500; color:var(--text); text-decoration:none;" class:hover:underline={true}>{p.name}</a>
+							</td>
+							<td class="muted">{p.clientName}</td>
+							<td>
+								{#if p.budgetHours !== null && p.pct !== null}
+									<div class="row gap-2" style="align-items:center;">
+										<div class="burn-bar" style="flex:1; max-width:100px;">
+											<div class="burn-bar-fill {p.pct >= 90 ? 'danger' : p.pct >= 70 ? 'warn' : ''}" style="width:{p.pct}%;"></div>
+										</div>
+										<span class="amount" style="font-size:11px; color:var(--text-muted); min-width:70px; text-align:right;">{p.loggedHours}ч / {p.budgetHours}ч</span>
+									</div>
+								{:else}
+									<span class="muted" style="font-size:12px;">{p.loggedHours}ч logged</span>
+								{/if}
+							</td>
+							<td>
+								{#if p.pct !== null && p.pct >= 90}
+									<span class="badge inv-overdue">Над лимита</span>
+								{:else if p.pct !== null && p.pct >= 70}
+									<span class="badge inv-partial">Близо</span>
+								{:else}
+									<span class="badge task-progress">В процес</span>
+								{/if}
+							</td>
+						</tr>
+					{:else}
+						<tr><td colspan="4" class="muted" style="text-align:center; padding:20px;">Няма активни проекти.</td></tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+
+		<!-- Invoiceable work by client -->
+		<div class="card">
+			<div class="card-header">
+				<div>
+					<h3 class="card-title">Фактурируема работа</h3>
+					<div class="card-sub">Незафактурирано по клиент</div>
+				</div>
+				<a href="/invoiceable-work" class="btn btn-accent btn-sm">Издай фактури</a>
+			</div>
+			<div style="padding:0 16px;">
+				{#if data.unpaidInvoices.length > 0}
+					{@const totalUnpaid = data.unpaidInvoices.reduce((s, i) => s + (i.grossTotalCents - i.paidTotalCents), 0)}
+					{#each [...new Map(data.unpaidInvoices.map(i => [i.client.legalName, i])).values()].slice(0, 5) as inv, idx}
+						{@const clientInvs = data.unpaidInvoices.filter(i => i.client.legalName === inv.client.legalName)}
+						{@const clientAmt = clientInvs.reduce((s, i) => s + (i.grossTotalCents - i.paidTotalCents), 0)}
+						{@const pct = totalUnpaid > 0 ? Math.round((clientAmt / totalUnpaid) * 100) : 0}
+						<div style="padding:12px 0; border-bottom:1px solid var(--border-soft);">
+							<div class="row-between" style="margin-bottom:6px;">
+								<span style="font-weight:500;">{inv.client.legalName}</span>
+								<span class="amount" style="font-weight:500;">{fmtMoney(clientAmt)} EUR</span>
+							</div>
+							<div class="row-between">
+								<span class="muted" style="font-size:12px;">{clientInvs.length} {clientInvs.length === 1 ? 'фактура' : 'фактури'}</span>
+								<div class="burn-bar" style="width:100px;">
+									<div class="burn-bar-fill" style="width:{pct}%; background:var(--accent);"></div>
+								</div>
+							</div>
+						</div>
+					{/each}
+					<div style="padding:12px 0; display:flex; justify-content:space-between;">
+						<span style="font-weight:500;">Общо неплатено</span>
+						<span class="amount" style="font-weight:600; font-size:14px;">{fmtMoney(data.unpaidInvoices.reduce((s, i) => s + (i.grossTotalCents - i.paidTotalCents), 0))} EUR</span>
+					</div>
+				{:else}
+					<div style="padding:20px 0; text-align:center;" class="muted">Няма незафактурирана работа.</div>
+				{/if}
+			</div>
+		</div>
+	</div>
+
+	<!-- 2-col grid row 2 -->
+	<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
+		<!-- Unpaid invoices -->
+		<div class="card">
+			<div class="card-header">
+				<div>
+					<h3 class="card-title">Неплатени фактури</h3>
+					<div class="card-sub">
+						{data.unpaidInvoices.filter(i => i.status === 'overdue').length} просрочени ·
+						{data.unpaidInvoices.filter(i => i.status === 'issued').length} издадени
+					</div>
+				</div>
+			</div>
+			<table class="tbl">
+				<thead>
+					<tr>
+						<th>Номер</th>
+						<th>Клиент</th>
+						<th>Падеж</th>
+						<th class="num">Сума</th>
+						<th>Статус</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each data.unpaidInvoices.slice(0, 5) as inv}
+						<tr class={inv.status === 'overdue' ? 'highlight-amber' : ''}>
+							<td class="amount">
+								<a href="/invoices/{inv.id}" style="color:inherit;">{inv.invoiceNumber ?? '—'}</a>
+							</td>
+							<td>{inv.client.legalName}</td>
+							<td class="amount muted">{fmtDate(inv.dueDate)}</td>
+							<td class="num">{fmtMoney(inv.grossTotalCents - inv.paidTotalCents)}</td>
+							<td>
+								{#if inv.status === 'overdue'}
+									<span class="badge inv-overdue">Просрочена</span>
+								{:else if inv.status === 'partially_paid'}
+									<span class="badge inv-partial">Частично</span>
+								{:else}
+									<span class="badge inv-issued">Издадена</span>
+								{/if}
+							</td>
+						</tr>
+					{:else}
+						<tr><td colspan="5" class="muted" style="text-align:center; padding:20px;">Няма неплатени фактури.</td></tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+
+		<!-- Bank statement widget -->
+		<div class="card">
+			<div class="card-header">
+				<div>
+					<h3 class="card-title">Банково извлечение</h3>
+					<div class="card-sub">Последни транзакции</div>
+				</div>
+				<a href="/bank-statements" class="btn btn-secondary btn-sm">
+					<Icon name="upload" size={12}/>Импорт
+				</a>
+			</div>
+			<div style="padding:16px;">
+				<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:16px;">
+					<div style="padding:12px; background:var(--success-subtle); border-radius:var(--r-md); border:1px solid #a7f3d0;">
+						<div class="amount" style="font-size:22px; font-weight:500; color:var(--success);">{data.bankMatchCounts.auto}</div>
+						<div style="font-size:11px; color:var(--success); text-transform:uppercase; font-family:var(--font-mono); letter-spacing:0.06em;">Автоматично</div>
+					</div>
+					<div style="padding:12px; background:var(--warning-subtle); border-radius:var(--r-md); border:1px solid #fde68a;">
+						<div class="amount" style="font-size:22px; font-weight:500; color:var(--warning);">{data.bankMatchCounts.review}</div>
+						<div style="font-size:11px; color:var(--warning); text-transform:uppercase; font-family:var(--font-mono); letter-spacing:0.06em;">Преглед</div>
+					</div>
+					<div style="padding:12px; background:var(--surface); border-radius:var(--r-md); border:1px solid var(--border);">
+						<div class="amount" style="font-size:22px; font-weight:500;">{data.bankMatchCounts.unmatched}</div>
+						<div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; font-family:var(--font-mono); letter-spacing:0.06em;">Несъвпадащо</div>
+					</div>
+				</div>
+				<div style="font-size:11px; color:var(--text-muted); text-transform:uppercase; font-family:var(--font-mono); letter-spacing:0.06em; margin-bottom:8px;">Последни транзакции</div>
+				{#each data.recentBankRows as row, i}
+					<div class="row-between" style="padding:6px 0; font-size:12px; border-top:{i ? '1px solid var(--border-soft)' : 'none'};">
+						<span class="amount muted" style="width:44px;">{fmtDateShort(row.transactionDate)}</span>
+						<span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0 8px;">{row.description}</span>
+						<span class="amount" style="font-weight:500; color:{row.amountCents > 0 ? 'var(--success)' : 'var(--text)'};">
+							{row.amountCents > 0 ? '+' : ''}{fmtMoney(row.amountCents)}
+						</span>
+						{#if row.matchState === 'auto_matched'}
+							<Icon name="check" size={12} />
+						{:else}
+							<Icon name="alert" size={12} />
+						{/if}
+					</div>
+				{:else}
+					<div class="muted" style="font-size:12px; text-align:center; padding:8px 0;">Няма транзакции.</div>
+				{/each}
+			</div>
+		</div>
+	</div>
+
+	<!-- Activity feed -->
+	<div class="card">
+		<div class="card-header">
+			<div>
+				<h3 class="card-title">Скорошна активност</h3>
+				<div class="card-sub">Логове и системни събития</div>
+			</div>
+			<a href="/audit" class="btn btn-ghost btn-sm">Audit log <Icon name="chevron-right" size={12}/></a>
+		</div>
+		<div style="padding:4px 16px;">
+			{#each data.recentAuditEvents as ev, i}
+				{@const actorName = ev.actor ? `${ev.actor.firstName} ${ev.actor.lastName}` : 'Система'}
+				{@const evTime = new Date(ev.createdAt)}
+				<div class="row" style="padding:10px 0; border-top:{i ? '1px solid var(--border-soft)' : 'none'}; align-items:flex-start;">
+					<span class="amount muted" style="font-size:11px; width:40px; margin-top:2px;">{String(evTime.getHours()).padStart(2,'0')}:{String(evTime.getMinutes()).padStart(2,'0')}</span>
+					<div style="flex:1;">
+						<span style="font-weight:500;">{actorName}</span>
+						<span class="muted"> {auditEventLabel(ev.eventType)} </span>
+						{#if ev.entityType}<span>{ev.entityType}</span>{/if}
+					</div>
+				</div>
+			{:else}
+				<div class="muted" style="padding:16px 0; text-align:center;">Няма активност.</div>
+			{/each}
+		</div>
+	</div>
 
 {:else if data.role === 'manager'}
-	<!-- Manager dashboard -->
-	<div class="stat-grid">
-		<div class="stat-card">
-			<div class="stat-value">{data.managedProjects.length}</div>
-			<div class="stat-label">Активни проекти</div>
-		</div>
-		<div class="stat-card {data.overdueTasks > 0 ? 'danger' : ''}">
-			<div class="stat-value">{data.overdueTasks}</div>
-			<div class="stat-label">Просрочени задачи</div>
-		</div>
-		<div class="stat-card {data.uninvoicedTaskCount > 0 ? 'warning' : ''}">
-			<div class="stat-value">{data.uninvoicedTaskCount}</div>
-			<div class="stat-label">Незафактурирани задачи</div>
+	<!-- ── Manager dashboard ────────────────────────────────────────────────── -->
+	<div class="page-header">
+		<div>
+			<h1 class="page-title">Добре дошъл</h1>
+			<p class="page-sub">Преглед на управляваните проекти</p>
 		</div>
 	</div>
-
-	<section class="section">
-		<h2>Активни проекти</h2>
-		{#if data.managedProjects.length === 0}
-			<p class="empty-state">Няма активни проекти в момента.</p>
-		{:else}
-			<div class="table-wrap">
-				<table>
-					<thead>
-						<tr>
-							<th>Проект</th>
-							<th>Клиент</th>
-							<th>Списъци задачи</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each data.managedProjects as project}
-							<tr>
-								<td><a href="/projects/{project.id}">{project.name}</a></td>
-								<td>{project.client.legalName}</td>
-								<td>{project._count.taskLists}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
-		{/if}
-	</section>
+	<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:24px;">
+		<div class="stat" style="padding:14px;">
+			<div class="stat-label">Активни проекти</div>
+			<div class="stat-value">{data.managedProjects.length}</div>
+		</div>
+		<div class="stat" style="padding:14px;">
+			<div class="stat-label">Просрочени задачи</div>
+			<div class="stat-value" style={data.overdueTasks > 0 ? 'color:var(--danger)' : ''}>{data.overdueTasks}</div>
+		</div>
+		<div class="stat" style="padding:14px;">
+			<div class="stat-label">Незафактурирани задачи</div>
+			<div class="stat-value" style={data.uninvoicedTaskCount > 0 ? 'color:var(--warning)' : ''}>{data.uninvoicedTaskCount}</div>
+		</div>
+	</div>
+	<div class="card">
+		<div class="card-header">
+			<h3 class="card-title">Активни проекти</h3>
+		</div>
+		<table class="tbl">
+			<thead>
+				<tr><th>Проект</th><th>Клиент</th><th>Списъци</th></tr>
+			</thead>
+			<tbody>
+				{#each data.managedProjects as p}
+					<tr>
+						<td><a href="/projects/{p.id}">{p.name}</a></td>
+						<td class="muted">{p.client.legalName}</td>
+						<td class="amount">{p._count.taskLists}</td>
+					</tr>
+				{:else}
+					<tr><td colspan="3" class="muted" style="text-align:center; padding:20px;">Няма активни проекти.</td></tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
 
 {:else if data.role === 'accountant'}
-	<!-- Accountant dashboard -->
-	<div class="stat-grid">
-		<div class="stat-card {data.unpaidInvoices.length > 0 ? 'warning' : 'success'}">
-			<div class="stat-value">{data.unpaidInvoices.length}</div>
-			<div class="stat-label">Неплатени фактури</div>
-		</div>
-		<div class="stat-card {data.upcomingExpenses.length > 0 ? 'warning' : ''}">
-			<div class="stat-value">{data.upcomingExpenses.length}</div>
-			<div class="stat-label">Предстоящи разходи (30 дни)</div>
-		</div>
-		<div class="stat-card {data.statementReviewCount > 0 ? 'danger' : 'success'}">
-			<div class="stat-value">{data.statementReviewCount}</div>
-			<div class="stat-label">За преглед в извлечения</div>
+	<!-- ── Accountant dashboard ─────────────────────────────────────────────── -->
+	<div class="page-header">
+		<div>
+			<h1 class="page-title">Добре дошъл</h1>
+			<p class="page-sub">Финансов преглед</p>
 		</div>
 	</div>
-
-	<section class="section">
-		<h2>Неплатени фактури</h2>
-		{#if data.unpaidInvoices.length === 0}
-			<p class="empty-state">Няма неплатени фактури.</p>
-		{:else}
-			<div class="table-wrap">
-				<table>
-					<thead>
-						<tr>
-							<th>Номер</th>
-							<th>Клиент</th>
-							<th>Статус</th>
-							<th>Падеж</th>
-							<th>Сума</th>
-							<th>Платено</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each data.unpaidInvoices as invoice}
-							{@const isInvoiceOverdue = invoice.dueDate && new Date(invoice.dueDate) < today}
-							<tr>
-								<td>
-									<a href="/invoices/{invoice.id}">{invoice.invoiceNumber ?? '—'}</a>
-								</td>
-								<td>{invoice.client.legalName}</td>
-								<td>
-									<span class="badge {invoice.status === 'overdue' ? 'badge-danger' : 'badge-warning'}">
-										{statusLabels[invoice.status] ?? invoice.status}
-									</span>
-								</td>
-								<td>
-									{#if invoice.dueDate}
-										<span class={isInvoiceOverdue ? 'text-danger' : ''}>
-											{formatDate(invoice.dueDate)}
-										</span>
-									{:else}
-										—
-									{/if}
-								</td>
-								<td>{formatAmount(invoice.grossTotalCents)}</td>
-								<td>{formatAmount(invoice.paidTotalCents)}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
-		{/if}
-	</section>
-
-	<section class="section">
-		<h2>Предстоящи периодични разходи</h2>
-		{#if data.upcomingExpenses.length === 0}
-			<p class="empty-state">Няма предстоящи периодични разходи през следващите 30 дни.</p>
-		{:else}
-			<div class="table-wrap">
-				<table>
-					<thead>
-						<tr>
-							<th>Описание</th>
-							<th>Категория</th>
-							<th>Дата</th>
-							<th>Сума</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each data.upcomingExpenses as expense}
-							<tr>
-								<td>{expense.description}</td>
-								<td>{expense.category.name}</td>
-								<td>{formatDate(expense.incurredDate)}</td>
-								<td>{formatAmount(expense.amountCents)}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
-		{/if}
-	</section>
+	<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:24px;">
+		<div class="stat" style="padding:14px;">
+			<div class="stat-label">Неплатени фактури</div>
+			<div class="stat-value" style={data.unpaidInvoices.length > 0 ? 'color:var(--warning)' : 'color:var(--success)'}>{data.unpaidInvoices.length}</div>
+		</div>
+		<div class="stat" style="padding:14px;">
+			<div class="stat-label">Предстоящи разходи (30 дни)</div>
+			<div class="stat-value">{data.upcomingExpenses.length}</div>
+		</div>
+		<div class="stat" style="padding:14px;">
+			<div class="stat-label">За преглед в извлечения</div>
+			<div class="stat-value" style={data.statementReviewCount > 0 ? 'color:var(--danger)' : 'color:var(--success)'}>{data.statementReviewCount}</div>
+		</div>
+	</div>
+	<div class="card">
+		<div class="card-header">
+			<h3 class="card-title">Неплатени фактури</h3>
+		</div>
+		<table class="tbl">
+			<thead>
+				<tr><th>Номер</th><th>Клиент</th><th>Статус</th><th>Падеж</th><th class="num">Сума</th></tr>
+			</thead>
+			<tbody>
+				{#each data.unpaidInvoices as inv}
+					<tr class={inv.status === 'overdue' ? 'highlight-amber' : ''}>
+						<td class="amount"><a href="/invoices/{inv.id}">{inv.invoiceNumber ?? '—'}</a></td>
+						<td>{inv.client.legalName}</td>
+						<td>
+							{#if inv.status === 'overdue'}
+								<span class="badge inv-overdue">Просрочена</span>
+							{:else}
+								<span class="badge inv-issued">Издадена</span>
+							{/if}
+						</td>
+						<td class="amount muted">{fmtDate(inv.dueDate)}</td>
+						<td class="num">{fmtMoney(inv.grossTotalCents)}</td>
+					</tr>
+				{:else}
+					<tr><td colspan="5" class="muted" style="text-align:center; padding:20px;">Няма неплатени фактури.</td></tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
 
 {:else}
-	<!-- Admin dashboard -->
-	<div class="stat-grid">
-		<div class="stat-card {data.unpaidInvoicesCount > 0 ? 'warning' : 'success'}">
-			<div class="stat-value">{data.unpaidInvoicesCount}</div>
-			<div class="stat-label">Неплатени фактури</div>
+	<!-- ── Employee dashboard ───────────────────────────────────────────────── -->
+	<div class="page-header">
+		<div>
+			<h1 class="page-title">Добре дошъл</h1>
+			<p class="page-sub">Моите задачи и работно време</p>
 		</div>
-		<div class="stat-card {data.overdueTaskCount > 0 ? 'danger' : 'success'}">
-			<div class="stat-value">{data.overdueTaskCount}</div>
-			<div class="stat-label">Просрочени задачи</div>
-		</div>
-		<div class="stat-card {data.unpaidExpensesCount > 0 ? 'warning' : ''}">
-			<div class="stat-value">{data.unpaidExpensesCount}</div>
-			<div class="stat-label">Неплатени разходи</div>
-		</div>
-		<div class="stat-card {data.statementReviewCount > 0 ? 'danger' : 'success'}">
-			<div class="stat-value">{data.statementReviewCount}</div>
-			<div class="stat-label">За преглед в извлечения</div>
-		</div>
-		{#each data.balances as bal}
-			<div class="stat-card {bal.balance < 0 ? 'danger' : 'success'}">
-				<div class="stat-value">{formatAmount(bal.balance)}</div>
-				<div class="stat-label">{containerTypeLabels[bal.containerType] ?? bal.containerType}: {bal.name}</div>
-			</div>
-		{/each}
 	</div>
-
-	{#if data.balances.length === 0}
-		<p class="empty-state" style="margin-bottom: 24px;">Няма конфигурирани финансови контейнери.</p>
-	{/if}
-
-	<section class="section">
-		<h2>Последни счетоводни записи</h2>
-		{#if data.recentLedgerEntries.length === 0}
-			<p class="empty-state">Няма счетоводни записи.</p>
-		{:else}
-			<div class="table-wrap">
-				<table>
-					<thead>
-						<tr>
-							<th>Дата</th>
-							<th>Вид</th>
-							<th>Описание</th>
-							<th>Сметка</th>
-							<th>Сума</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each data.recentLedgerEntries as entry}
-							<tr>
-								<td>{formatDate(entry.entryDate)}</td>
-								<td>{ledgerEntryTypeLabels[entry.entryType] ?? entry.entryType}</td>
-								<td>{entry.description}</td>
-								<td>{entry.container.name}</td>
-								<td class={entry.amountCents < 0 ? 'text-danger' : 'text-success'}>
-									{formatAmount(entry.amountCents)}
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
-		{/if}
-	</section>
+	<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:24px;">
+		<div class="stat" style="padding:14px;">
+			<div class="stat-label">Просрочени задачи</div>
+			<div class="stat-value" style={data.overdueTasks > 0 ? 'color:var(--danger)' : ''}>{data.overdueTasks}</div>
+		</div>
+		<div class="stat" style="padding:14px;">
+			<div class="stat-label">Незафактурирани записа</div>
+			<div class="stat-value">{data.uninvoicedTimeLogs._count}</div>
+		</div>
+		<div class="stat" style="padding:14px;">
+			<div class="stat-label">Незафактурирано работно време</div>
+			<div class="stat-value">{fmtDuration(data.uninvoicedTimeLogs._sum.durationMinutes)}</div>
+		</div>
+	</div>
+	<div class="card">
+		<div class="card-header">
+			<h3 class="card-title">Моите задачи</h3>
+		</div>
+		<table class="tbl">
+			<thead>
+				<tr><th>Задача</th><th>Проект</th><th>Приоритет</th><th>Краен срок</th></tr>
+			</thead>
+			<tbody>
+				{#each data.assignedTasks as task}
+					<tr>
+						<td style="font-weight:500;"><a href="/projects/{task.taskList.projectId}" style="color:inherit;">{task.title}</a></td>
+						<td class="muted">{task.taskList.project.name}</td>
+						<td><span class="badge outline">{priorityLabels[task.priority] ?? task.priority}</span></td>
+						<td class="amount {isOverdue(task.deadlineDate) ? '' : 'muted'}" style={isOverdue(task.deadlineDate) ? 'color:var(--danger)' : ''}>
+							{fmtDate(task.deadlineDate)}
+						</td>
+					</tr>
+				{:else}
+					<tr><td colspan="4" class="muted" style="text-align:center; padding:20px;">Няма назначени задачи.</td></tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
 {/if}
-
-<style>
-	h1 {
-		font-size: 1.5rem;
-		font-weight: 700;
-		color: #1e293b;
-	}
-
-	h2 {
-		font-size: 1.125rem;
-		font-weight: 600;
-		color: #1e293b;
-		margin-bottom: 14px;
-	}
-
-	.stat-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-		gap: 16px;
-		margin-bottom: 24px;
-	}
-
-	.stat-card {
-		background: white;
-		border: 1px solid #e2e8f0;
-		border-radius: 8px;
-		padding: 20px;
-	}
-
-	.stat-card .stat-value {
-		font-size: 2rem;
-		font-weight: 700;
-		color: #1e293b;
-	}
-
-	.stat-card .stat-label {
-		font-size: 0.875rem;
-		color: #64748b;
-		margin-top: 4px;
-	}
-
-	.stat-card.warning .stat-value {
-		color: #d97706;
-	}
-
-	.stat-card.danger .stat-value {
-		color: #dc2626;
-	}
-
-	.stat-card.success .stat-value {
-		color: #16a34a;
-	}
-
-	.section {
-		margin-bottom: 32px;
-	}
-
-	.table-wrap {
-		overflow-x: auto;
-		border: 1px solid #e2e8f0;
-		border-radius: 8px;
-	}
-
-	table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 0.9rem;
-	}
-
-	thead {
-		background: #f8fafc;
-	}
-
-	th {
-		text-align: left;
-		padding: 10px 14px;
-		font-weight: 600;
-		color: #475569;
-		font-size: 0.8125rem;
-		border-bottom: 1px solid #e2e8f0;
-	}
-
-	td {
-		padding: 10px 14px;
-		color: #334155;
-		border-bottom: 1px solid #f1f5f9;
-	}
-
-	tbody tr:last-child td {
-		border-bottom: none;
-	}
-
-	tbody tr:hover {
-		background: #f8fafc;
-	}
-
-	a {
-		color: #2563eb;
-		text-decoration: none;
-	}
-
-	a:hover {
-		text-decoration: underline;
-	}
-
-	.empty-state {
-		color: #94a3b8;
-		font-size: 0.9375rem;
-		padding: 20px 0;
-	}
-
-	.text-danger {
-		color: #dc2626;
-	}
-
-	.text-success {
-		color: #16a34a;
-	}
-
-	.badge {
-		display: inline-block;
-		padding: 2px 8px;
-		border-radius: 9999px;
-		font-size: 0.75rem;
-		font-weight: 500;
-	}
-
-	.badge-warning {
-		background: #fef3c7;
-		color: #92400e;
-	}
-
-	.badge-danger {
-		background: #fee2e2;
-		color: #991b1b;
-	}
-</style>

@@ -1,435 +1,152 @@
 <script lang="ts">
 	import type { ActionData, PageData } from './$types';
+	import Icon from '$lib/components/Icon.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	const billingTypeLabels: Record<string, string> = {
-		all: 'Всички',
-		hourly: 'Почасово',
-		flat_fee: 'Фиксирана цена'
+		all: 'Всички', hourly: 'Часова', flat_fee: 'Фикс. цена'
 	};
 
 	const taskStatusLabels: Record<string, string> = {
-		todo: 'За изпълнение',
-		in_progress: 'В процес',
-		done: 'Завършена',
-		cancelled: 'Отказана'
+		todo: 'За изпълнение', in_progress: 'В процес', done: 'Завършена', cancelled: 'Отказана'
 	};
 
-	function formatMoney(value: number) {
-		return `${(value / 100).toFixed(2)} ${data.company.currency}`;
+	function fmtMoney(cents: number) {
+		return `${(cents / 100).toLocaleString('bg-BG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${data.company.currency}`;
 	}
 
-	function formatMinutes(value: number) {
-		const hours = Math.floor(value / 60);
-		const minutes = value % 60;
-		return `${hours}ч ${minutes.toString().padStart(2, '0')}м`;
+	function fmtMinutes(mins: number) {
+		const h = Math.floor(mins / 60);
+		const m = mins % 60;
+		return `${h}ч ${String(m).padStart(2, '0')}м`;
 	}
 
-	function assigneeNames(
-		assignees: Array<{
-			firstName: string;
-			lastName: string;
-		}>
-	) {
-		return assignees.length > 0
-			? assignees.map((assignee) => `${assignee.firstName} ${assignee.lastName}`).join(', ')
-			: 'Няма назначени';
-	}
+	const clientColors = ['#4f46e5', '#0891b2', '#dc2626', '#ca8a04', '#059669', '#7c3aed'];
 </script>
 
 <svelte:head>
-	<title>Работа за фактуриране - Иномедия</title>
+	<title>Фактурируема работа – Иномедия</title>
 </svelte:head>
 
-<section class="page-header">
+<div class="page-header">
 	<div>
-		<h1>Работа за фактуриране</h1>
-		<p>Преглед на готовата за фактуриране работа с филтри по клиент, проект и тип таксуване.</p>
+		<h1 class="page-title">Фактурируема работа</h1>
+		<p class="page-sub">
+			{data.grouped.length} клиента ·
+			{data.summary.taskCount} задачи готови ·
+			{fmtMoney(data.summary.totalAmountCents)} общо
+		</p>
 	</div>
-</section>
+	<div class="page-header-actions">
+		<button class="btn btn-secondary btn-sm"><Icon name="filter" size={13}/>Филтри</button>
+	</div>
+</div>
 
 {#if (form as any)?.createDraftError}
-	<div class="alert error">{(form as any).createDraftError}</div>
+	<div class="alert danger" style="margin-bottom:12px;">{(form as any).createDraftError}</div>
 {/if}
 
-<section class="summary-grid">
-	<div class="summary-card">
-		<span class="summary-label">Задачи</span>
-		<strong>{data.summary.taskCount}</strong>
-	</div>
-	<div class="summary-card">
-		<span class="summary-label">Обща стойност</span>
-		<strong>{formatMoney(data.summary.totalAmountCents)}</strong>
-	</div>
-	<div class="summary-card">
-		<span class="summary-label">Нефактурирано време</span>
-		<strong>{formatMinutes(data.summary.totalUninvoicedMinutes)}</strong>
-	</div>
-</section>
-
-<section class="card filter-card">
-	<form method="GET" class="filter-grid">
-		<div class="field">
-			<label for="clientId">Клиент</label>
-			<select id="clientId" name="clientId">
-				<option value="all">Всички клиенти</option>
-				{#each data.clients as client}
-					<option value={client.id} selected={data.filters.clientId === client.id}>{client.legalName}</option>
-				{/each}
-			</select>
-		</div>
-		<div class="field">
-			<label for="projectId">Проект</label>
-			<select id="projectId" name="projectId">
-				<option value="all">Всички проекти</option>
-				{#each data.projects as project}
-					<option value={project.id} selected={data.filters.projectId === project.id}>
-						{project.name}
-					</option>
-				{/each}
-			</select>
-		</div>
-		<div class="field">
-			<label for="billingType">Тип таксуване</label>
-			<select id="billingType" name="billingType">
-				{#each Object.entries(billingTypeLabels) as [value, label]}
-					<option value={value} selected={data.filters.billingType === value}>{label}</option>
-				{/each}
-			</select>
-		</div>
-		{#if data.users.length > 0}
-			<div class="field">
-				<label for="userId">Изпълнител</label>
-				<select id="userId" name="userId">
-					<option value="all" selected={data.filters.userId === 'all'}>Всички изпълнители</option>
-					{#each data.users as u}
-						<option value={u.id} selected={data.filters.userId === u.id}>
-							{u.firstName} {u.lastName}
-						</option>
-					{/each}
-				</select>
-			</div>
-		{/if}
-		<div class="field">
-			<label for="dateFrom">Работа от дата</label>
-			<input id="dateFrom" type="date" name="dateFrom" value={data.filters.dateFrom} />
-		</div>
-		<div class="field">
-			<label for="dateTo">Работа до дата</label>
-			<input id="dateTo" type="date" name="dateTo" value={data.filters.dateTo} />
-		</div>
-		<div class="filter-actions">
-			<button type="submit" class="btn-primary">Приложи</button>
-			<a class="btn-secondary" href="/invoiceable-work">Изчисти</a>
-		</div>
-	</form>
-</section>
+<!-- Filter bar -->
+<form method="GET" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; align-items:flex-end;">
+	<select class="select" name="clientId" style="width:auto;">
+		<option value="all">Всички клиенти</option>
+		{#each data.clients as c}
+			<option value={c.id} selected={data.filters.clientId === c.id}>{c.legalName}</option>
+		{/each}
+	</select>
+	<select class="select" name="projectId" style="width:auto;">
+		<option value="all">Всички проекти</option>
+		{#each data.projects as p}
+			<option value={p.id} selected={data.filters.projectId === p.id}>{p.name}</option>
+		{/each}
+	</select>
+	<select class="select" name="billingType" style="width:auto;">
+		{#each Object.entries(billingTypeLabels) as [val, lbl]}
+			<option value={val} selected={data.filters.billingType === val}>{lbl}</option>
+		{/each}
+	</select>
+	{#if data.users.length > 0}
+		<select class="select" name="userId" style="width:auto;">
+			<option value="all">Всички служители</option>
+			{#each data.users as u}
+				<option value={u.id} selected={data.filters.userId === u.id}>{u.firstName} {u.lastName}</option>
+			{/each}
+		</select>
+	{/if}
+	<input class="input" type="date" name="dateFrom" value={data.filters.dateFrom} style="width:140px;" />
+	<input class="input" type="date" name="dateTo" value={data.filters.dateTo} style="width:140px;" />
+	<button type="submit" class="btn btn-secondary btn-sm">Приложи</button>
+	<a href="/invoiceable-work" class="btn btn-ghost btn-sm">Изчисти</a>
+</form>
 
 {#if data.grouped.length === 0}
-	<section class="card empty-card">
-		<h2>Няма резултати</h2>
-		<p>Няма задачи, които отговарят на избраните филтри и са готови за фактуриране.</p>
-	</section>
+	<div class="card" style="padding:40px; text-align:center;">
+		<div class="muted">Няма задачи готови за фактуриране.</div>
+	</div>
 {:else}
-	<div class="group-list">
-		{#each data.grouped as clientGroup}
-			<section class="card client-card">
-				<header class="group-header">
-					<div>
-						<div class="eyebrow">Клиент</div>
-						<h2>{clientGroup.legalName}</h2>
+	<div class="col gap-3">
+		{#each data.grouped as clientGroup, gi}
+			<div class="card">
+				<!-- Client header -->
+				<div style="padding:12px 16px; background:var(--accent-subtle); border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px;">
+					<div class="sb-avatar" style="width:28px; height:28px; font-size:11px; background:{clientColors[gi % clientColors.length]};">{clientGroup.legalName[0]}</div>
+					<div class="col" style="flex:1;">
+						<span style="font-weight:600; font-size:14px;">{clientGroup.legalName}</span>
+						<span class="muted amount" style="font-size:11px;">
+							{clientGroup.projects.length} {clientGroup.projects.length === 1 ? 'проект' : 'проекта'} ·
+							{clientGroup.projects.reduce((s: number, p: any) => s + p.items.length, 0)} задачи
+						</span>
 					</div>
-					<strong>{formatMoney(clientGroup.totalAmountCents)}</strong>
-				</header>
-
-				<form method="POST" action="?/createDraft" class="project-groups">
-					<input type="hidden" name="clientId" value={clientGroup.id} />
-					{#each clientGroup.projects as projectGroup}
-						<section class="project-card">
-							<header class="project-header">
-								<div>
-									<div class="eyebrow">Проект</div>
-									<h3>{projectGroup.name}</h3>
-								</div>
-								<div class="project-total">{formatMoney(projectGroup.totalAmountCents)}</div>
-							</header>
-
-							<div class="table-head">
-								<span></span>
-								<span>Задача</span>
-								<span>Тип</span>
-								<span>Статус</span>
-								<span>Обхват</span>
-								<span>Стойност</span>
-							</div>
-
-							{#each projectGroup.items as item}
-								<label class="task-row">
-									<span class="task-select">
-										<input type="checkbox" name="taskIds" value={item.id} />
-									</span>
-									<span class="task-main">
-										<a class="task-link" href={`/projects/${item.projectId}`}>{item.title}</a>
-										<small>{assigneeNames(item.assignees)}</small>
-									</span>
-									<span>{billingTypeLabels[item.billingType]}</span>
-									<span>{taskStatusLabels[item.status]}</span>
-									<span>
-										{#if item.billingType === 'hourly'}
-											{formatMinutes(item.uninvoicedMinutes)} · {item.uninvoicedLogCount} записа
-											<br />
-											<small>{item.firstWorkDate} - {item.lastWorkDate}</small>
-										{:else}
-											Фиксирана цена
-										{/if}
-									</span>
-									<span class="amount">{formatMoney(item.amountCents)}</span>
-								</label>
-							{/each}
-						</section>
-					{/each}
-
+					<div class="col" style="align-items:flex-end;">
+						<span class="amount" style="font-size:16px; font-weight:600;">{fmtMoney(clientGroup.totalAmountCents)}</span>
+						<span class="muted" style="font-size:11px;">незафактурирано</span>
+					</div>
 					{#if data.permissions.canCreateDrafts}
-						<div class="draft-actions">
-							<button type="submit" class="btn-primary">Създай чернова за клиента</button>
-						</div>
+						<form method="POST" action="?/createDraft">
+							<input type="hidden" name="clientId" value={clientGroup.id} />
+							{#each clientGroup.projects as pg}
+								{#each pg.items as item}
+									<input type="hidden" name="taskIds" value={item.id} />
+								{/each}
+							{/each}
+							<button type="submit" class="btn btn-accent btn-sm"><Icon name="plus" size={12}/>Създай фактура</button>
+						</form>
 					{/if}
-				</form>
-			</section>
+				</div>
+
+				<!-- Projects -->
+				{#each clientGroup.projects as projectGroup}
+					<div style="border-top:1px solid var(--border-soft);">
+						<div style="padding:8px 16px; background:var(--surface); display:flex; align-items:center; gap:10px; font-size:12px;">
+							<Icon name="folder" size={12}/>
+							<span style="font-weight:600;">{projectGroup.name}</span>
+							<span class="amount muted" style="font-size:11px;">{fmtMoney(projectGroup.totalAmountCents)}</span>
+						</div>
+
+						{#each projectGroup.items as item}
+							<div style="display:grid; grid-template-columns:1fr 110px 130px 100px 28px; padding:8px 16px; border-top:1px solid var(--border-soft); align-items:center; gap:12px; font-size:13px;">
+								<div>
+									<a href="/projects/{item.projectId}" style="font-weight:450; color:var(--text);">{item.title}</a>
+									{#if item.assignees.length > 0}
+										<div class="muted" style="font-size:11px;">{item.assignees.map((a: any) => `${a.firstName} ${a.lastName}`).join(', ')}</div>
+									{/if}
+								</div>
+								<span class="badge outline" style="font-size:10px; justify-self:flex-start;">{billingTypeLabels[item.billingType] ?? item.billingType}</span>
+								<span class="amount muted" style="font-size:11px; text-align:right;">
+									{#if item.billingType === 'hourly'}
+										{fmtMinutes(item.uninvoicedMinutes)}
+									{:else}
+										Фиксирана
+									{/if}
+								</span>
+								<span class="amount" style="font-weight:500; text-align:right;">{fmtMoney(item.amountCents)}</span>
+								<div></div>
+							</div>
+						{/each}
+					</div>
+				{/each}
+			</div>
 		{/each}
 	</div>
 {/if}
-
-<style>
-	.page-header {
-		margin-bottom: 24px;
-	}
-
-	.page-header h1,
-	h2,
-	h3 {
-		margin: 0;
-		color: #0f172a;
-	}
-
-	.page-header p {
-		margin: 8px 0 0;
-		color: #64748b;
-	}
-
-	.summary-grid {
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 16px;
-		margin-bottom: 20px;
-	}
-
-	.summary-card,
-	.card {
-		background: #fff;
-		border-radius: 14px;
-		box-shadow: 0 2px 16px rgba(15, 23, 42, 0.06);
-	}
-
-	.alert {
-		padding: 12px 14px;
-		border-radius: 10px;
-		margin-bottom: 16px;
-	}
-
-	.alert.error {
-		background: #fef2f2;
-		border: 1px solid #fecaca;
-		color: #b91c1c;
-	}
-
-	.summary-card {
-		display: grid;
-		gap: 6px;
-		padding: 18px 20px;
-	}
-
-	.summary-label,
-	.eyebrow {
-		font-size: 0.78rem;
-		font-weight: 800;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		color: #64748b;
-	}
-
-	.filter-card,
-	.client-card {
-		padding: 20px;
-	}
-
-	.filter-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-		gap: 14px;
-		align-items: end;
-	}
-
-	.field {
-		display: grid;
-		gap: 6px;
-	}
-
-	label {
-		font-size: 0.88rem;
-		font-weight: 600;
-		color: #334155;
-	}
-
-	select,
-	button {
-		font: inherit;
-	}
-
-	select {
-		width: 100%;
-		border: 1px solid #cbd5e1;
-		border-radius: 10px;
-		padding: 10px 12px;
-		background: #fff;
-		color: #0f172a;
-	}
-
-	.filter-actions {
-		display: flex;
-		gap: 10px;
-	}
-
-	.btn-primary,
-	.btn-secondary {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		padding: 10px 14px;
-		border-radius: 10px;
-		font-weight: 700;
-		text-decoration: none;
-		cursor: pointer;
-	}
-
-	.btn-primary {
-		border: none;
-		background: #2563eb;
-		color: #fff;
-	}
-
-	.btn-secondary {
-		border: 1px solid #cbd5e1;
-		background: #fff;
-		color: #0f172a;
-	}
-
-	.group-list,
-	.project-groups {
-		display: grid;
-		gap: 16px;
-	}
-
-	.group-header,
-	.project-header,
-	.task-row,
-	.table-head {
-		display: grid;
-		grid-template-columns: 2fr 1fr;
-		gap: 16px;
-		align-items: center;
-	}
-
-	.project-card {
-		border: 1px solid #e2e8f0;
-		border-radius: 14px;
-		overflow: hidden;
-	}
-
-	.project-header,
-	.table-head {
-		padding: 16px 18px;
-	}
-
-	.table-head,
-	.task-row {
-		grid-template-columns: 56px 2fr 1fr 1fr 1.3fr 1fr;
-	}
-
-	.table-head {
-		border-top: 1px solid #e2e8f0;
-		background: #f8fafc;
-		font-size: 0.78rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: #64748b;
-	}
-
-	.task-row {
-		padding: 16px 18px;
-		border-top: 1px solid #eef2f7;
-		color: inherit;
-		text-decoration: none;
-		cursor: pointer;
-	}
-
-	.task-row:hover {
-		background: #f8fafc;
-	}
-
-	.task-main {
-		display: grid;
-		gap: 4px;
-	}
-
-	.task-select {
-		display: flex;
-		align-items: flex-start;
-		justify-content: center;
-	}
-
-	.task-select input {
-		margin-top: 4px;
-	}
-
-	.task-link {
-		color: #0f172a;
-		font-weight: 700;
-	}
-
-	.task-main small,
-	.task-row small {
-		color: #64748b;
-	}
-
-	.amount,
-	.project-total {
-		font-weight: 700;
-		color: #0f172a;
-	}
-
-	.empty-card {
-		padding: 24px;
-	}
-
-	.draft-actions {
-		display: flex;
-		justify-content: flex-end;
-		padding-top: 4px;
-	}
-
-	@media (max-width: 960px) {
-		.summary-grid,
-		.filter-grid,
-		.table-head,
-		.task-row {
-			grid-template-columns: 1fr;
-		}
-
-		.filter-actions {
-			flex-direction: column;
-		}
-	}
-</style>

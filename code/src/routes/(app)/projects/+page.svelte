@@ -1,27 +1,27 @@
 <script lang="ts">
 	import type { ActionData, PageData } from './$types';
+	import Icon from '$lib/components/Icon.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let showCreateForm = $state(false);
 	let activeProjectId = $state<string | null>(null);
-
-	const roleLabels: Record<string, string> = {
-		admin: 'Администратор',
-		manager: 'Мениджър',
-		employee: 'Служител',
-		accountant: 'Счетоводител'
-	};
+	let filterStatus = $state<'all' | 'active' | 'on_hold' | 'completed'>('all');
 
 	const statusLabels: Record<string, string> = {
-		active: 'Активен',
-		on_hold: 'На пауза',
-		completed: 'Завършен',
-		cancelled: 'Отказан'
+		active: 'Активен', on_hold: 'На пауза', completed: 'Завършен', cancelled: 'Отказан'
+	};
+
+	const roleLabels: Record<string, string> = {
+		admin: 'Администратор', manager: 'Мениджър', employee: 'Служител', accountant: 'Счетоводител'
 	};
 
 	function userLabel(user: { firstName: string; lastName: string }) {
 		return `${user.firstName} ${user.lastName}`;
+	}
+
+	function userInitials(user: { firstName: string; lastName: string }) {
+		return (user.firstName[0] ?? '') + (user.lastName[0] ?? '');
 	}
 
 	function isManagerRole(user: { role: string }) {
@@ -29,7 +29,7 @@
 	}
 
 	function projectMemberIds(members: Array<{ userId: string }>) {
-		return members.map((member) => member.userId);
+		return members.map((m) => m.userId);
 	}
 
 	function createFieldError(field: string) {
@@ -40,7 +40,7 @@
 		return (form as any)?.createProjectValues?.[field] ?? fallback;
 	}
 
-	function createFieldValues(field: string) {
+	function createFieldValues(field: string): string[] {
 		return ((form as any)?.createProjectValues?.[field] ?? []) as string[];
 	}
 
@@ -53,12 +53,10 @@
 	}
 
 	function projectFieldValue(projectId: string, field: string, fallback: string | boolean | null) {
-		return isActiveProjectForm(projectId)
-			? ((form as any)?.projectFormValues?.[field] ?? fallback ?? '')
-			: (fallback ?? '');
+		return isActiveProjectForm(projectId) ? ((form as any)?.projectFormValues?.[field] ?? fallback ?? '') : (fallback ?? '');
 	}
 
-	function projectFieldValues(projectId: string, fallback: string[]) {
+	function projectFieldValues(projectId: string, fallback: string[]): string[] {
 		return isActiveProjectForm(projectId)
 			? (((form as any)?.projectFormValues?.memberUserIds ?? fallback) as string[])
 			: fallback;
@@ -74,28 +72,26 @@
 		if ((form as any)?.projectRateOverrideProjectId === projectId) {
 			return (form as any)?.projectRateOverrideValues?.[field] ?? fallback;
 		}
-
 		return field === 'effectiveFrom' ? new Date().toISOString().slice(0, 10) : fallback;
 	}
 
 	function canViewProjectRates(project: { primaryManagerUserId: string }) {
-		if (data.permissions.currentUserRole === 'admin' || data.permissions.currentUserRole === 'accountant') {
-			return true;
-		}
-
-		return (
-			data.permissions.currentUserRole === 'manager' &&
-			project.primaryManagerUserId === data.permissions.currentUserId
-		);
+		if (data.permissions.currentUserRole === 'admin' || data.permissions.currentUserRole === 'accountant') return true;
+		return data.permissions.currentUserRole === 'manager' && project.primaryManagerUserId === data.permissions.currentUserId;
 	}
 
 	function formatDate(value: string | Date) {
-		return new Intl.DateTimeFormat('bg-BG', {
-			day: '2-digit',
-			month: 'short',
-			year: 'numeric',
-			timeZone: 'UTC'
-		}).format(new Date(value));
+		return new Intl.DateTimeFormat('bg-BG', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(value));
+	}
+
+	function formatMoneyFromCents(value: number | null | undefined) {
+		if (value == null) return '';
+		return (value / 100).toFixed(2);
+	}
+
+	function formatMoney(value: number | null | undefined) {
+		const n = formatMoneyFromCents(value);
+		return n ? `${n} ${data.company.currency}` : 'Няма';
 	}
 
 	function toggleProject(projectId: string) {
@@ -106,78 +102,75 @@
 		return activeProjectId === projectId;
 	}
 
-	function formatMoneyFromCents(value: number | null | undefined) {
-		if (value == null) {
-			return '';
-		}
-
-		return (value / 100).toFixed(2);
-	}
-
-	function formatMoney(value: number | null | undefined) {
-		const normalized = formatMoneyFromCents(value);
-		return normalized ? `${normalized} ${data.company.currency}` : 'Няма';
-	}
-
 	$effect(() => {
-		if ((form as any)?.createProjectSuccess) {
-			showCreateForm = false;
-		}
-
-		if ((form as any)?.projectFormProjectId) {
-			activeProjectId = (form as any).projectFormProjectId;
-		}
+		if ((form as any)?.createProjectSuccess) showCreateForm = false;
+		if ((form as any)?.projectFormProjectId) activeProjectId = (form as any).projectFormProjectId;
 	});
+
+	const filteredProjects = $derived(
+		data.projects.filter((p: any) => filterStatus === 'all' || p.status === filterStatus)
+	);
+
+	const avatarColors = ['#4f46e5', '#0891b2', '#dc2626', '#ca8a04', '#059669', '#7c3aed', '#0e7490', '#b45309'];
+
+	function avatarColor(index: number) {
+		return avatarColors[index % avatarColors.length];
+	}
 </script>
 
 <svelte:head>
-	<title>Проекти - Иномедия</title>
+	<title>Проекти – Иномедия</title>
 </svelte:head>
 
 <div class="page-header">
 	<div>
-		<h1>Проекти</h1>
-		<p>Клиентски и вътрешни проекти с основен мениджър, екип, бюджет, абонамент и статус.</p>
+		<h1 class="page-title">Проекти</h1>
+		<p class="page-sub">
+			{data.projects.filter((p: any) => p.status === 'active').length} активни ·
+			{data.projects.filter((p: any) => p.status === 'completed').length} завършени ·
+			{data.projects.filter((p: any) => p.status === 'on_hold').length} на пауза
+		</p>
 	</div>
-	{#if data.permissions.canManageProjects}
-		<button class="btn-primary" onclick={() => (showCreateForm = !showCreateForm)}>
-			{showCreateForm ? 'Отказ' : '+ Нов проект'}
-		</button>
-	{/if}
+	<div class="page-header-actions">
+		{#if data.permissions.canManageProjects}
+			<button class="btn btn-primary btn-sm" onclick={() => (showCreateForm = !showCreateForm)}>
+				<Icon name="plus" size={13}/>{showCreateForm ? 'Отказ' : 'Нов проект'}
+			</button>
+		{/if}
+	</div>
 </div>
 
+<!-- Alerts -->
 {#if (form as any)?.createProjectError}
-	<div class="alert error">{(form as any).createProjectError}</div>
+	<div class="alert danger" style="margin-bottom:12px;">{(form as any).createProjectError}</div>
 {/if}
-
 {#if (form as any)?.createProjectSuccess}
-	<div class="alert success">Проектът е създаден.</div>
+	<div class="alert warning" style="margin-bottom:12px;">Проектът е създаден.</div>
 {/if}
-
 {#if (form as any)?.projectFormError}
-	<div class="alert error">{(form as any).projectFormError}</div>
+	<div class="alert danger" style="margin-bottom:12px;">{(form as any).projectFormError}</div>
 {/if}
-
 {#if (form as any)?.projectFormSuccess}
-	<div class="alert success">Проектът е обновен.</div>
+	<div class="alert warning" style="margin-bottom:12px;">Проектът е обновен.</div>
 {/if}
-
 {#if (form as any)?.projectRateOverrideError}
-	<div class="alert error">{(form as any).projectRateOverrideError}</div>
+	<div class="alert danger" style="margin-bottom:12px;">{(form as any).projectRateOverrideError}</div>
 {/if}
-
 {#if (form as any)?.projectRateOverrideSuccess}
-	<div class="alert success">Историята на билируемата ставка е добавена.</div>
+	<div class="alert warning" style="margin-bottom:12px;">Историята на билируемата ставка е добавена.</div>
 {/if}
 
+<!-- Create form -->
 {#if showCreateForm && data.permissions.canManageProjects}
-	<section class="card create-card">
-		<h2>Нов проект</h2>
-		<form method="POST" action="?/createProject">
-			<div class="grid two">
+	<div class="card" style="margin-bottom:16px;">
+		<div class="card-header">
+			<h3 class="card-title">Нов проект</h3>
+		</div>
+		<form method="POST" action="?/createProject" style="padding:16px;">
+			<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
 				<div class="field">
-					<label for="create-clientId">Клиент</label>
-					<select id="create-clientId" name="clientId" required>
+					<label class="label" for="create-clientId">Клиент</label>
+					<select class="select" id="create-clientId" name="clientId" required>
 						<option value="">Изберете клиент</option>
 						{#each data.clients as client}
 							<option value={client.id} selected={createFieldValue('clientId') === client.id}>
@@ -185,16 +178,16 @@
 							</option>
 						{/each}
 					</select>
-					{#if createFieldError('clientId')}<span class="error-text">{createFieldError('clientId')}</span>{/if}
+					{#if createFieldError('clientId')}<span style="color:var(--danger); font-size:11px;">{createFieldError('clientId')}</span>{/if}
 				</div>
 				<div class="field">
-					<label for="create-name">Име на проекта</label>
-					<input id="create-name" name="name" type="text" value={createFieldValue('name')} required />
-					{#if createFieldError('name')}<span class="error-text">{createFieldError('name')}</span>{/if}
+					<label class="label" for="create-name">Ime на проекта</label>
+					<input class="input" id="create-name" name="name" type="text" value={createFieldValue('name')} required />
+					{#if createFieldError('name')}<span style="color:var(--danger); font-size:11px;">{createFieldError('name')}</span>{/if}
 				</div>
 				<div class="field">
-					<label for="create-primaryManagerUserId">Основен мениджър</label>
-					<select id="create-primaryManagerUserId" name="primaryManagerUserId" required>
+					<label class="label" for="create-primaryManagerUserId">Основен мениджър</label>
+					<select class="select" id="create-primaryManagerUserId" name="primaryManagerUserId" required>
 						<option value="">Изберете мениджър</option>
 						{#each data.users.filter(isManagerRole) as user}
 							<option value={user.id} selected={createFieldValue('primaryManagerUserId') === user.id}>
@@ -202,736 +195,278 @@
 							</option>
 						{/each}
 					</select>
-					{#if createFieldError('primaryManagerUserId')}<span class="error-text">{createFieldError('primaryManagerUserId')}</span>{/if}
+					{#if createFieldError('primaryManagerUserId')}<span style="color:var(--danger); font-size:11px;">{createFieldError('primaryManagerUserId')}</span>{/if}
 				</div>
-				<div class="field short-field">
-					<label for="create-status">Статус</label>
-					<select id="create-status" name="status">
-						{#each Object.entries(statusLabels) as [value, label]}
-							<option value={value} selected={createFieldValue('status', 'active') === value}>{label}</option>
+				<div class="field">
+					<label class="label" for="create-status">Статус</label>
+					<select class="select" id="create-status" name="status">
+						{#each Object.entries(statusLabels) as [val, lbl]}
+							<option value={val} selected={createFieldValue('status', 'active') === val}>{lbl}</option>
 						{/each}
 					</select>
-					{#if createFieldError('status')}<span class="error-text">{createFieldError('status')}</span>{/if}
 				</div>
 				<div class="field">
-					<label for="create-budgetAmount">Бюджет ({data.company.currency})</label>
-					<input id="create-budgetAmount" name="budgetAmount" type="text" inputmode="decimal" value={createFieldValue('budgetAmount')} />
-					{#if createFieldError('budgetAmount')}<span class="error-text">{createFieldError('budgetAmount')}</span>{/if}
+					<label class="label" for="create-budgetAmount">Бюджет ({data.company.currency})</label>
+					<input class="input" id="create-budgetAmount" name="budgetAmount" type="text" inputmode="decimal" value={createFieldValue('budgetAmount')} />
 				</div>
 				<div class="field">
-					<label for="create-retainerAmount">Абонамент ({data.company.currency})</label>
-					<input id="create-retainerAmount" name="retainerAmount" type="text" inputmode="decimal" value={createFieldValue('retainerAmount')} />
-					{#if createFieldError('retainerAmount')}<span class="error-text">{createFieldError('retainerAmount')}</span>{/if}
+					<label class="label" for="create-retainerAmount">Абонамент ({data.company.currency})</label>
+					<input class="input" id="create-retainerAmount" name="retainerAmount" type="text" inputmode="decimal" value={createFieldValue('retainerAmount')} />
 				</div>
 			</div>
-
-			<div class="field">
-				<label for="create-description">Описание</label>
-				<textarea id="create-description" name="description" rows="4">{createFieldValue('description')}</textarea>
-				{#if createFieldError('description')}<span class="error-text">{createFieldError('description')}</span>{/if}
+			<div class="field" style="margin-bottom:12px;">
+				<label class="label" for="create-description">Описание</label>
+				<textarea class="input" id="create-description" name="description" rows="3" style="resize:vertical;">{createFieldValue('description')}</textarea>
 			</div>
-
-			<label class="checkbox">
+			<label style="display:flex; align-items:center; gap:8px; font-size:13px; margin-bottom:16px; cursor:pointer;">
 				<input type="checkbox" name="isBillable" checked={Boolean(createFieldValue('isBillable', true))} />
-				<span>Билируем проект</span>
+				Билируем проект
 			</label>
-			<p class="hint">Ако изберете вътрешния клиент, проектът ще остане небилируем независимо от тази отметка.</p>
-
-			<div class="members-block">
-				<div class="members-title">Екип на проекта</div>
-				<p class="hint">Основният мениджър се добавя автоматично към екипа.</p>
-				<div class="members-grid">
+			<div style="margin-bottom:16px;">
+				<div style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-muted); font-family:var(--font-mono); margin-bottom:8px;">Екип на проекта</div>
+				<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px;">
 					{#each data.users as user}
-						<label class="member-option">
-							<input
-								type="checkbox"
-								name="memberUserIds"
-								value={user.id}
-								checked={createFieldValues('memberUserIds').includes(user.id)}
-							/>
+						<label style="display:flex; align-items:center; gap:6px; padding:6px 8px; border:1px solid var(--border); border-radius:var(--r-md); font-size:12px; cursor:pointer;">
+							<input type="checkbox" name="memberUserIds" value={user.id} checked={createFieldValues('memberUserIds').includes(user.id)} />
 							<span>{userLabel(user)}</span>
-							<small>{roleLabels[user.role]}{user.status === 'inactive' ? ' · неактивен' : ''}</small>
+							<span class="muted" style="font-size:11px;">· {roleLabels[user.role]}</span>
 						</label>
 					{/each}
 				</div>
-				{#if createFieldError('memberUserIds')}<span class="error-text">{createFieldError('memberUserIds')}</span>{/if}
 			</div>
-
-			<button type="submit" class="btn-primary">Създай проект</button>
+			<div class="row gap-2">
+				<button type="submit" class="btn btn-primary btn-sm">Създай проект</button>
+				<button type="button" class="btn btn-ghost btn-sm" onclick={() => (showCreateForm = false)}>Отказ</button>
+			</div>
 		</form>
-	</section>
+	</div>
 {/if}
 
-<div class="project-list">
-	{#each data.projects as project}
-		<section class="card project-card">
-			<button type="button" class="project-toggle" onclick={() => toggleProject(project.id)} aria-expanded={isExpanded(project.id)}>
-				<div class="project-head">
-					<div class="project-summary">
-						<div class="title-row">
-							<h2>{project.name}</h2>
-							<span class="badge" class:active={project.status === 'active'} class:inactive={project.status !== 'active'}>
-								{statusLabels[project.status]}
-							</span>
-							{#if project.client.isInternal}
-								<span class="badge internal">Вътрешен</span>
-							{/if}
-							{#if !project.isBillable}
-								<span class="badge muted">Небилируем</span>
-							{/if}
-						</div>
+<!-- Filter row -->
+<div class="row gap-2" style="margin-bottom:16px;">
+	<div class="chip-group">
+		<button class="chip {filterStatus === 'all' ? 'active' : ''}" onclick={() => (filterStatus = 'all')}>Всички · {data.projects.length}</button>
+		<button class="chip {filterStatus === 'active' ? 'active' : ''}" onclick={() => (filterStatus = 'active')}>Активни · {data.projects.filter((p: any) => p.status === 'active').length}</button>
+		<button class="chip {filterStatus === 'completed' ? 'active' : ''}" onclick={() => (filterStatus = 'completed')}>Завършени · {data.projects.filter((p: any) => p.status === 'completed').length}</button>
+		<button class="chip {filterStatus === 'on_hold' ? 'active' : ''}" onclick={() => (filterStatus = 'on_hold')}>На пауза · {data.projects.filter((p: any) => p.status === 'on_hold').length}</button>
+	</div>
+</div>
 
-						<div class="project-meta">
-							<div>
-								<span class="meta-label">Клиент</span>
-								<span class="meta-value">{project.client.legalName}</span>
-							</div>
-							<div>
-								<span class="meta-label">Мениджър</span>
-								<span class="meta-value">{userLabel(project.primaryManager)}</span>
-							</div>
-							<div>
-								<span class="meta-label">Екип</span>
-								<span class="meta-value">{project.members.length}</span>
-							</div>
-							{#if data.permissions.canViewFinancials}
-								<div>
-									<span class="meta-label">Бюджет</span>
-									<span class="meta-value">{formatMoney(project.budgetAmountCents)}</span>
-								</div>
-								<div>
-									<span class="meta-label">Абонамент</span>
-									<span class="meta-value">{formatMoney(project.retainerAmountCents)}</span>
-								</div>
-							{/if}
-						</div>
-					</div>
-
-					<span class="expand-indicator" class:expanded={isExpanded(project.id)}>
-						{isExpanded(project.id) ? 'Скрий' : 'Отвори'}
-					</span>
-				</div>
-			</button>
-
-			{#if isExpanded(project.id)}
-				<form method="POST" action="?/updateProject">
-					<input type="hidden" name="projectId" value={project.id} />
-
-					<div class="grid two">
-						<div class="field">
-							<label for={'clientId-' + project.id}>Клиент</label>
-							<select id={'clientId-' + project.id} name="clientId" disabled={!data.permissions.canManageProjects}>
-								{#each data.clients as client}
-									<option value={client.id} selected={projectFieldValue(project.id, 'clientId', project.clientId) === client.id}>
-										{client.legalName}{client.isInternal ? ' · вътрешен' : ''}
-									</option>
-								{/each}
-							</select>
-							{#if projectFieldError(project.id, 'clientId')}<span class="error-text">{projectFieldError(project.id, 'clientId')}</span>{/if}
-						</div>
-						<div class="field">
-							<label for={'name-' + project.id}>Име на проекта</label>
-							<input
-								id={'name-' + project.id}
-								name="name"
-								type="text"
-								value={projectFieldValue(project.id, 'name', project.name)}
-								required
-								disabled={!data.permissions.canManageProjects}
-							/>
-							{#if projectFieldError(project.id, 'name')}<span class="error-text">{projectFieldError(project.id, 'name')}</span>{/if}
-						</div>
-						<div class="field">
-							<label for={'primaryManagerUserId-' + project.id}>Основен мениджър</label>
-							<select
-								id={'primaryManagerUserId-' + project.id}
-								name="primaryManagerUserId"
-								disabled={!data.permissions.canManageProjects}
-							>
-								{#each data.users.filter(isManagerRole) as user}
-									<option
-										value={user.id}
-										selected={projectFieldValue(project.id, 'primaryManagerUserId', project.primaryManagerUserId) === user.id}
-									>
-										{userLabel(user)} · {roleLabels[user.role]}
-									</option>
-								{/each}
-							</select>
-							{#if projectFieldError(project.id, 'primaryManagerUserId')}<span class="error-text">{projectFieldError(project.id, 'primaryManagerUserId')}</span>{/if}
-						</div>
-						<div class="field short-field">
-							<label for={'status-' + project.id}>Статус</label>
-							<select id={'status-' + project.id} name="status" disabled={!data.permissions.canManageProjects}>
-								{#each Object.entries(statusLabels) as [value, label]}
-									<option value={value} selected={projectFieldValue(project.id, 'status', project.status) === value}>{label}</option>
-								{/each}
-							</select>
-							{#if projectFieldError(project.id, 'status')}<span class="error-text">{projectFieldError(project.id, 'status')}</span>{/if}
-						</div>
-						{#if data.permissions.canViewFinancials}
-							<div class="field">
-								<label for={'budgetAmount-' + project.id}>Бюджет ({data.company.currency})</label>
-								<input
-									id={'budgetAmount-' + project.id}
-									name="budgetAmount"
-									type="text"
-									inputmode="decimal"
-									value={projectFieldValue(project.id, 'budgetAmount', formatMoneyFromCents(project.budgetAmountCents))}
-									disabled={!data.permissions.canManageProjects}
-								/>
-								{#if projectFieldError(project.id, 'budgetAmount')}<span class="error-text">{projectFieldError(project.id, 'budgetAmount')}</span>{/if}
-							</div>
-							<div class="field">
-								<label for={'retainerAmount-' + project.id}>Абонамент ({data.company.currency})</label>
-								<input
-									id={'retainerAmount-' + project.id}
-									name="retainerAmount"
-									type="text"
-									inputmode="decimal"
-									value={projectFieldValue(project.id, 'retainerAmount', formatMoneyFromCents(project.retainerAmountCents))}
-									disabled={!data.permissions.canManageProjects}
-								/>
-								{#if projectFieldError(project.id, 'retainerAmount')}<span class="error-text">{projectFieldError(project.id, 'retainerAmount')}</span>{/if}
-							</div>
+<!-- Card grid -->
+{#if filteredProjects.length === 0}
+	<div class="card" style="padding:40px; text-align:center;">
+		<div class="muted">Няма проекти в тази категория.</div>
+	</div>
+{:else}
+	<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px;">
+		{#each filteredProjects as project}
+			<div class="card" style="cursor:pointer;" onclick={() => toggleProject(project.id)}>
+				<div style="padding:16px;">
+					<div class="row-between" style="margin-bottom:8px;">
+						<span class="amount muted" style="font-size:11px;">{project.client.legalName}</span>
+						{#if project.status === 'completed'}
+							<span class="badge task-done">Завършен</span>
+						{:else if project.status === 'on_hold'}
+							<span class="badge inv-partial">На пауза</span>
+						{:else if project.status === 'cancelled'}
+							<span class="badge task-cancelled">Отказан</span>
+						{:else}
+							<span class="badge task-progress">В процес</span>
 						{/if}
 					</div>
 
-					<div class="field">
-						<label for={'description-' + project.id}>Описание</label>
-						<textarea
-							id={'description-' + project.id}
-							name="description"
-							rows="4"
-							disabled={!data.permissions.canManageProjects}
-						>{projectFieldValue(project.id, 'description', project.description)}</textarea>
-						{#if projectFieldError(project.id, 'description')}<span class="error-text">{projectFieldError(project.id, 'description')}</span>{/if}
-					</div>
-
-					<label class="checkbox">
-						<input
-							type="checkbox"
-							name="isBillable"
-							checked={Boolean(projectFieldValue(project.id, 'isBillable', project.isBillable))}
-							disabled={!data.permissions.canManageProjects || project.client.isInternal}
-						/>
-						<span>Билируем проект</span>
-					</label>
-					{#if project.client.isInternal}
-						<p class="hint">Проектите към вътрешния клиент остават небилируеми по правило.</p>
+					<div style="font-size:14px; font-weight:600; margin-bottom:4px; letter-spacing:-0.005em;">{project.name}</div>
+					{#if project.description}
+						<div class="muted" style="font-size:12px; margin-bottom:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{project.description}</div>
+					{:else}
+						<div style="margin-bottom:12px;"></div>
 					{/if}
 
-					<div class="members-block">
-						<div class="members-title">Екип на проекта</div>
-						<div class="members-grid">
-							{#each data.users as user}
-								<label class="member-option" class:disabled={!data.permissions.canManageProjects}>
-									<input
-										type="checkbox"
-										name="memberUserIds"
-										value={user.id}
-										checked={projectFieldValues(project.id, projectMemberIds(project.members)).includes(user.id)}
-										disabled={!data.permissions.canManageProjects}
-									/>
-									<span>{userLabel(user)}</span>
-									<small>{roleLabels[user.role]}{user.status === 'inactive' ? ' · неактивен' : ''}</small>
-								</label>
-							{/each}
-						</div>
-						{#if projectFieldError(project.id, 'memberUserIds')}<span class="error-text">{projectFieldError(project.id, 'memberUserIds')}</span>{/if}
-					</div>
-
-					{#if project.members.length > 0}
-						<div class="member-summary">
-							<div class="meta-label">Текущ екип</div>
-							<div class="chips">
-								{#each project.members as member}
-									<span class="chip">{userLabel(member.user)}{member.user.status === 'inactive' ? ' · неактивен' : ''}</span>
-								{/each}
+					{#if data.permissions.canViewFinancials && project.budgetAmountCents}
+						<div style="margin-bottom:12px;">
+							<div class="row-between" style="margin-bottom:4px; font-size:11px;">
+								<span class="muted">Бюджет</span>
+								<span class="amount" style="font-weight:500;">{formatMoney(project.budgetAmountCents)}</span>
 							</div>
-						</div>
-					{/if}
-
-					{#if canViewProjectRates(project)}
-						<div class="rate-history-panel">
-							<div class="members-title">История на проектни билируеми ставки</div>
-							<div class="rate-override-form">
-								<input type="hidden" name="projectId" value={project.id} />
-								<div class="rate-override-grid">
-									<select name="userId" aria-label="Участник">
-										<option value="">Изберете участник</option>
-										{#each project.members as member}
-											<option value={member.userId} selected={projectRateFieldValue(project.id, 'userId') === member.userId}>
-												{userLabel(member.user)}
-											</option>
-										{/each}
-									</select>
-									<input
-										name="effectiveFrom"
-										type="date"
-										value={projectRateFieldValue(project.id, 'effectiveFrom')}
-										aria-label="В сила от"
-									/>
-									<input
-										name="billableRate"
-										type="text"
-										inputmode="decimal"
-										placeholder={`Ставка (${data.company.currency})`}
-										value={projectRateFieldValue(project.id, 'billableRate')}
-										aria-label="Билируема ставка"
-									/>
-									<button type="submit" class="btn-primary" formaction="?/addProjectMemberRateOverride" formmethod="POST">
-										Добави
-									</button>
-								</div>
-								{#if projectRateFieldError(project.id, 'userId')}<span class="error-text">{projectRateFieldError(project.id, 'userId')}</span>{/if}
-								{#if projectRateFieldError(project.id, 'effectiveFrom')}<span class="error-text">{projectRateFieldError(project.id, 'effectiveFrom')}</span>{/if}
-								{#if projectRateFieldError(project.id, 'billableRate')}<span class="error-text">{projectRateFieldError(project.id, 'billableRate')}</span>{/if}
-							</div>
-
-							<div class="rate-history-list">
-								{#if project.memberBillableRateOverrides.length === 0}
-									<p class="hint">Все още няма проектни ставки по участници.</p>
-								{:else}
-									{#each project.memberBillableRateOverrides as override}
-										<div class="rate-history-entry">
-											<strong>{userLabel(override.user)}</strong>
-											<span>В сила от {formatDate(override.effectiveFrom)}</span>
-											<span>{formatMoney(override.billableRateCents)}</span>
-										</div>
-									{/each}
-								{/if}
-							</div>
-						</div>
-					{/if}
-
-					{#if data.permissions.canManageProjects}
-						<div class="action-row">
-							<button type="submit" class="btn-primary">Запази проекта</button>
-							<a class="btn-secondary" href={`/projects/${project.id}`}>Задачи и списъци</a>
 						</div>
 					{:else}
-						<a class="btn-secondary" href={`/projects/${project.id}`}>Задачи и списъци</a>
+						<div style="margin-bottom:12px;"></div>
 					{/if}
-				</form>
-			{/if}
-		</section>
-	{/each}
-</div>
 
-{#if data.projects.length === 0}
-	<section class="card empty-card">
-		<h2>Все още няма проекти</h2>
-		<p>Създайте първия проект, за да свържете клиент, мениджър, екип и бюджет в едно място.</p>
-	</section>
+					<div class="row-between" style="border-top:1px solid var(--border-soft); padding-top:10px;">
+						<div class="row gap-1">
+							{#each project.members.slice(0, 3) as member, idx}
+								<div class="sb-avatar" style="width:22px; height:22px; font-size:8px; background:{avatarColor(idx)}; margin-left:{idx > 0 ? '-6px' : '0'}; border:2px solid var(--bg-elevated); z-index:{3-idx}; position:relative;">
+									{userInitials(member.user)}
+								</div>
+							{/each}
+							{#if project.members.length > 3}
+								<span class="muted" style="font-size:12px; margin-left:4px;">+{project.members.length - 3}</span>
+							{/if}
+						</div>
+						<div class="row gap-2">
+							<span class="amount muted" style="font-size:11px;">{project.members.length} в екипа</span>
+							{#if data.permissions.canManageProjects}
+								<button class="topbar-icon-btn" onclick={(e) => { e.stopPropagation(); toggleProject(project.id); }} aria-label="Настройки">
+									<Icon name={isExpanded(project.id) ? 'chevron-down' : 'more'} size={13}/>
+								</button>
+							{/if}
+						</div>
+					</div>
+				</div>
+			</div>
+		{/each}
+	</div>
 {/if}
 
-<style>
-	.page-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 16px;
-		margin-bottom: 24px;
-	}
+<!-- Edit panel -->
+{#if activeProjectId}
+	{@const project = data.projects.find((p: any) => p.id === activeProjectId)}
+	{#if project}
+		<div class="card" style="margin-top:16px;">
+			<div class="card-header">
+				<div>
+					<h3 class="card-title">Редактиране: {project.name}</h3>
+					<div class="card-sub">{project.client.legalName}</div>
+				</div>
+				<div class="row gap-2">
+					<a href="/projects/{project.id}" class="btn btn-secondary btn-sm">
+						<Icon name="folder" size={13}/>Задачи и списъци
+					</a>
+					<button class="btn btn-ghost btn-sm" onclick={() => (activeProjectId = null)}>
+						<Icon name="x" size={13}/>Затвори
+					</button>
+				</div>
+			</div>
+			<form method="POST" action="?/updateProject" style="padding:16px;">
+				<input type="hidden" name="projectId" value={project.id} />
+				<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+					<div class="field">
+						<label class="label" for="clientId-{project.id}">Клиент</label>
+						<select class="select" id="clientId-{project.id}" name="clientId" disabled={!data.permissions.canManageProjects}>
+							{#each data.clients as client}
+								<option value={client.id} selected={projectFieldValue(project.id, 'clientId', project.clientId) === client.id}>
+									{client.legalName}{client.isInternal ? ' · вътрешен' : ''}
+								</option>
+							{/each}
+						</select>
+					</div>
+					<div class="field">
+						<label class="label" for="name-{project.id}">Ime на проекта</label>
+						<input class="input" id="name-{project.id}" name="name" type="text"
+							value={projectFieldValue(project.id, 'name', project.name)} required
+							disabled={!data.permissions.canManageProjects} />
+						{#if projectFieldError(project.id, 'name')}<span style="color:var(--danger); font-size:11px;">{projectFieldError(project.id, 'name')}</span>{/if}
+					</div>
+					<div class="field">
+						<label class="label" for="primaryManagerUserId-{project.id}">Основен мениджър</label>
+						<select class="select" id="primaryManagerUserId-{project.id}" name="primaryManagerUserId" disabled={!data.permissions.canManageProjects}>
+							{#each data.users.filter(isManagerRole) as user}
+								<option value={user.id} selected={projectFieldValue(project.id, 'primaryManagerUserId', project.primaryManagerUserId) === user.id}>
+									{userLabel(user)} · {roleLabels[user.role]}
+								</option>
+							{/each}
+						</select>
+					</div>
+					<div class="field">
+						<label class="label" for="status-{project.id}">Статус</label>
+						<select class="select" id="status-{project.id}" name="status" disabled={!data.permissions.canManageProjects}>
+							{#each Object.entries(statusLabels) as [val, lbl]}
+								<option value={val} selected={projectFieldValue(project.id, 'status', project.status) === val}>{lbl}</option>
+							{/each}
+						</select>
+					</div>
+					{#if data.permissions.canViewFinancials}
+						<div class="field">
+							<label class="label" for="budgetAmount-{project.id}">Бюджет ({data.company.currency})</label>
+							<input class="input" id="budgetAmount-{project.id}" name="budgetAmount" type="text" inputmode="decimal"
+								value={projectFieldValue(project.id, 'budgetAmount', formatMoneyFromCents(project.budgetAmountCents))}
+								disabled={!data.permissions.canManageProjects} />
+						</div>
+						<div class="field">
+							<label class="label" for="retainerAmount-{project.id}">Абонамент ({data.company.currency})</label>
+							<input class="input" id="retainerAmount-{project.id}" name="retainerAmount" type="text" inputmode="decimal"
+								value={projectFieldValue(project.id, 'retainerAmount', formatMoneyFromCents(project.retainerAmountCents))}
+								disabled={!data.permissions.canManageProjects} />
+						</div>
+					{/if}
+				</div>
+				<div class="field" style="margin-bottom:12px;">
+					<label class="label" for="description-{project.id}">Описание</label>
+					<textarea class="input" id="description-{project.id}" name="description" rows="3" style="resize:vertical;"
+						disabled={!data.permissions.canManageProjects}>{projectFieldValue(project.id, 'description', project.description)}</textarea>
+				</div>
+				<label style="display:flex; align-items:center; gap:8px; font-size:13px; margin-bottom:16px; cursor:pointer;">
+					<input type="checkbox" name="isBillable"
+						checked={Boolean(projectFieldValue(project.id, 'isBillable', project.isBillable))}
+						disabled={!data.permissions.canManageProjects || project.client.isInternal} />
+					Билируем проект
+				</label>
+				<div style="margin-bottom:16px;">
+					<div style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-muted); font-family:var(--font-mono); margin-bottom:8px;">Екип на проекта</div>
+					<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px;">
+						{#each data.users as user}
+							<label style="display:flex; align-items:center; gap:6px; padding:6px 8px; border:1px solid var(--border); border-radius:var(--r-md); font-size:12px; cursor:pointer;">
+								<input type="checkbox" name="memberUserIds" value={user.id}
+									checked={projectFieldValues(project.id, projectMemberIds(project.members)).includes(user.id)}
+									disabled={!data.permissions.canManageProjects} />
+								<span>{userLabel(user)}</span>
+								<span class="muted" style="font-size:11px;">· {roleLabels[user.role]}</span>
+							</label>
+						{/each}
+					</div>
+				</div>
 
-	h1 {
-		font-size: 1.5rem;
-		font-weight: 700;
-		color: #0f172a;
-	}
+				{#if data.permissions.canManageProjects}
+					<div class="row gap-2">
+						<button type="submit" class="btn btn-primary btn-sm">Запази проекта</button>
+						<button type="button" class="btn btn-ghost btn-sm" onclick={() => (activeProjectId = null)}>Отказ</button>
+					</div>
+				{/if}
+			</form>
 
-	h2 {
-		color: #0f172a;
-	}
-
-	p {
-		color: #64748b;
-		margin-top: 6px;
-	}
-
-	.project-list {
-		display: grid;
-		gap: 24px;
-	}
-
-	.card {
-		background: #fff;
-		border-radius: 12px;
-		box-shadow: 0 2px 12px rgba(15, 23, 42, 0.06);
-		overflow: hidden;
-	}
-
-	.create-card,
-	.empty-card {
-		padding: 24px;
-	}
-
-	.project-toggle {
-		width: 100%;
-		border: none;
-		background: transparent;
-		padding: 24px;
-		text-align: left;
-		cursor: pointer;
-	}
-
-	.project-head {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 20px;
-	}
-
-	.project-summary {
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-	}
-
-	.title-row {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 10px;
-	}
-
-	.project-meta {
-		display: grid;
-		grid-template-columns: repeat(5, minmax(0, 1fr));
-		gap: 16px;
-	}
-
-	.meta-label {
-		display: block;
-		font-size: 0.75rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: #64748b;
-		margin-bottom: 4px;
-	}
-
-	.meta-value {
-		font-size: 0.98rem;
-		font-weight: 600;
-		color: #0f172a;
-	}
-
-	.expand-indicator {
-		flex-shrink: 0;
-		padding-top: 4px;
-		font-size: 0.85rem;
-		font-weight: 700;
-		color: #2563eb;
-	}
-
-	form {
-		display: flex;
-		flex-direction: column;
-		gap: 18px;
-		padding: 0 24px 24px;
-		border-top: 1px solid #e2e8f0;
-	}
-
-	.grid {
-		display: grid;
-		gap: 16px;
-	}
-
-	.grid.two {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-	}
-
-	.field {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-	}
-
-	.short-field {
-		max-width: 260px;
-	}
-
-	label {
-		font-size: 0.875rem;
-		font-weight: 600;
-		color: #334155;
-	}
-
-	input,
-	select,
-	textarea {
-		width: 100%;
-		border: 1px solid #cbd5e1;
-		border-radius: 8px;
-		padding: 10px 12px;
-		font: inherit;
-		color: #0f172a;
-		background: #fff;
-	}
-
-	input:focus,
-	select:focus,
-	textarea:focus {
-		outline: none;
-		border-color: #2563eb;
-		box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
-	}
-
-	input:disabled,
-	select:disabled,
-	textarea:disabled {
-		background: #f8fafc;
-		color: #64748b;
-	}
-
-	textarea {
-		resize: vertical;
-		min-height: 6.5rem;
-		white-space: pre-wrap;
-	}
-
-	.checkbox {
-		display: inline-flex;
-		align-items: center;
-		gap: 10px;
-	}
-
-	.checkbox input {
-		width: auto;
-	}
-
-	.members-block {
-		border: 1px solid #e2e8f0;
-		border-radius: 10px;
-		padding: 16px;
-		background: #f8fafc;
-	}
-
-	.members-title {
-		font-size: 0.95rem;
-		font-weight: 700;
-		color: #0f172a;
-	}
-
-	.members-grid {
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 12px;
-		margin-top: 14px;
-	}
-
-	.member-option {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-		padding: 12px;
-		border: 1px solid #dbe4f0;
-		border-radius: 10px;
-		background: #fff;
-	}
-
-	.member-option input {
-		width: auto;
-		margin-bottom: 4px;
-	}
-
-	.member-option.disabled {
-		opacity: 0.7;
-	}
-
-	.member-option small,
-	.hint {
-		color: #64748b;
-		font-size: 0.82rem;
-	}
-
-	.member-summary {
-		border: 1px solid #e2e8f0;
-		border-radius: 10px;
-		padding: 14px 16px;
-		background: #fff;
-	}
-
-	.rate-history-panel {
-		display: grid;
-		gap: 14px;
-		border: 1px solid #e2e8f0;
-		border-radius: 10px;
-		padding: 16px;
-		background: #fff;
-	}
-
-	.rate-override-form,
-	.rate-history-list {
-		display: grid;
-		gap: 10px;
-	}
-
-	.rate-override-grid {
-		display: grid;
-		grid-template-columns: 1.2fr 1fr 1fr auto;
-		gap: 10px;
-		align-items: center;
-	}
-
-	.rate-history-entry {
-		display: grid;
-		gap: 2px;
-		padding: 12px;
-		border: 1px solid #e2e8f0;
-		border-radius: 10px;
-		background: #f8fafc;
-		font-size: 0.88rem;
-	}
-
-	.chips {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 8px;
-	}
-
-	.chip {
-		display: inline-flex;
-		align-items: center;
-		border-radius: 999px;
-		padding: 6px 10px;
-		background: #e2e8f0;
-		color: #334155;
-		font-size: 0.82rem;
-		font-weight: 600;
-	}
-
-	.badge {
-		display: inline-flex;
-		align-items: center;
-		border-radius: 999px;
-		padding: 4px 10px;
-		font-size: 0.8rem;
-		font-weight: 600;
-	}
-
-	.badge.active {
-		background: #dcfce7;
-		color: #166534;
-	}
-
-	.badge.inactive {
-		background: #fef3c7;
-		color: #92400e;
-	}
-
-	.badge.internal {
-		background: #dbeafe;
-		color: #1d4ed8;
-	}
-
-	.badge.muted {
-		background: #e2e8f0;
-		color: #475569;
-	}
-
-	.alert {
-		padding: 12px 14px;
-		border-radius: 8px;
-		margin-bottom: 18px;
-		font-size: 0.92rem;
-	}
-
-	.alert.error {
-		background: #fef2f2;
-		border: 1px solid #fecaca;
-		color: #b91c1c;
-	}
-
-	.alert.success {
-		background: #f0fdf4;
-		border: 1px solid #bbf7d0;
-		color: #166534;
-	}
-
-	.error-text {
-		font-size: 0.8rem;
-		color: #dc2626;
-	}
-
-	.btn-primary {
-		border: none;
-		border-radius: 8px;
-		padding: 10px 16px;
-		font: inherit;
-		font-weight: 600;
-		cursor: pointer;
-		align-self: flex-start;
-		background: #2563eb;
-		color: #fff;
-	}
-
-	.btn-primary:hover {
-		background: #1d4ed8;
-	}
-
-	.btn-secondary {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		border: 1px solid #cbd5e1;
-		border-radius: 8px;
-		padding: 10px 16px;
-		font-weight: 600;
-		color: #0f172a;
-		background: #fff;
-	}
-
-	.btn-secondary:hover {
-		border-color: #94a3b8;
-		text-decoration: none;
-	}
-
-	.action-row {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 12px;
-		align-items: center;
-	}
-
-	@media (max-width: 1100px) {
-		.project-meta,
-		.members-grid {
-			grid-template-columns: repeat(2, minmax(0, 1fr));
-		}
-
-		.rate-override-grid {
-			grid-template-columns: repeat(2, minmax(0, 1fr));
-		}
-	}
-
-	@media (max-width: 900px) {
-		.page-header,
-		.project-head {
-			flex-direction: column;
-			align-items: stretch;
-		}
-
-		.grid.two,
-		.project-meta,
-		.members-grid,
-		.rate-override-grid {
-			grid-template-columns: 1fr;
-		}
-
-		.short-field {
-			max-width: none;
-		}
-
-		.project-toggle,
-		form {
-			padding-left: 18px;
-			padding-right: 18px;
-		}
-
-		.btn-primary {
-			width: 100%;
-		}
-	}
-</style>
+			{#if canViewProjectRates(project)}
+				<div style="padding:16px; border-top:1px solid var(--border);">
+					<div style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-muted); font-family:var(--font-mono); margin-bottom:12px;">Проектни билируеми ставки</div>
+					<form method="POST" action="?/addProjectMemberRateOverride">
+						<input type="hidden" name="projectId" value={project.id} />
+						<div style="display:grid; grid-template-columns:1fr 160px 160px auto; gap:8px; margin-bottom:12px; align-items:end;">
+							<div class="field" style="margin:0;">
+								<label class="label" for="rate-userId-{project.id}">Участник</label>
+								<select class="select" id="rate-userId-{project.id}" name="userId">
+									<option value="">Изберете</option>
+									{#each project.members as member}
+										<option value={member.userId} selected={projectRateFieldValue(project.id, 'userId') === member.userId}>
+											{userLabel(member.user)}
+										</option>
+									{/each}
+								</select>
+								{#if projectRateFieldError(project.id, 'userId')}<span style="color:var(--danger); font-size:11px;">{projectRateFieldError(project.id, 'userId')}</span>{/if}
+							</div>
+							<div class="field" style="margin:0;">
+								<label class="label" for="rate-from-{project.id}">В сила от</label>
+								<input class="input" id="rate-from-{project.id}" type="date" name="effectiveFrom" value={projectRateFieldValue(project.id, 'effectiveFrom')} />
+							</div>
+							<div class="field" style="margin:0;">
+								<label class="label" for="rate-val-{project.id}">Ставка ({data.company.currency})</label>
+								<input class="input" id="rate-val-{project.id}" type="text" inputmode="decimal" name="billableRate" value={projectRateFieldValue(project.id, 'billableRate')} />
+							</div>
+							<button type="submit" class="btn btn-secondary btn-sm" style="align-self:end;">Добави</button>
+						</div>
+					</form>
+					{#if project.memberBillableRateOverrides.length > 0}
+						<div style="display:flex; flex-direction:column; gap:4px;">
+							{#each project.memberBillableRateOverrides as ov}
+								<div class="row gap-3" style="font-size:12px; padding:6px 8px; background:var(--surface); border-radius:var(--r-sm);">
+									<span style="font-weight:500;">{userLabel(ov.user)}</span>
+									<span class="muted">от {formatDate(ov.effectiveFrom)}</span>
+									<span class="amount">{formatMoney(ov.billableRateCents)}</span>
+								</div>
+							{/each}
+						</div>
+					{/if}
+				</div>
+			{/if}
+		</div>
+	{/if}
+{/if}
