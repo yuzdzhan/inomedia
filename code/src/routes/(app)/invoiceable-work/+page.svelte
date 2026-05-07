@@ -1,7 +1,7 @@
 <script lang="ts">
-	import type { PageData } from './$types';
+	import type { ActionData, PageData } from './$types';
 
-	let { data }: { data: PageData } = $props();
+	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	const billingTypeLabels: Record<string, string> = {
 		all: 'Всички',
@@ -48,6 +48,10 @@
 		<p>Преглед на готовата за фактуриране работа с филтри по клиент, проект и тип таксуване.</p>
 	</div>
 </section>
+
+{#if (form as any)?.createDraftError}
+	<div class="alert error">{(form as any).createDraftError}</div>
+{/if}
 
 <section class="summary-grid">
 	<div class="summary-card">
@@ -118,7 +122,8 @@
 					<strong>{formatMoney(clientGroup.totalAmountCents)}</strong>
 				</header>
 
-				<div class="project-groups">
+				<form method="POST" action="?/createDraft" class="project-groups">
+					<input type="hidden" name="clientId" value={clientGroup.id} />
 					{#each clientGroup.projects as projectGroup}
 						<section class="project-card">
 							<header class="project-header">
@@ -130,6 +135,7 @@
 							</header>
 
 							<div class="table-head">
+								<span></span>
 								<span>Задача</span>
 								<span>Тип</span>
 								<span>Статус</span>
@@ -138,9 +144,12 @@
 							</div>
 
 							{#each projectGroup.items as item}
-								<a class="task-row" href={`/projects/${item.projectId}`}>
+								<label class="task-row">
+									<span class="task-select">
+										<input type="checkbox" name="taskIds" value={item.id} />
+									</span>
 									<span class="task-main">
-										<strong>{item.title}</strong>
+										<a class="task-link" href={`/projects/${item.projectId}`}>{item.title}</a>
 										<small>{assigneeNames(item.assignees)}</small>
 									</span>
 									<span>{billingTypeLabels[item.billingType]}</span>
@@ -155,11 +164,17 @@
 										{/if}
 									</span>
 									<span class="amount">{formatMoney(item.amountCents)}</span>
-								</a>
+								</label>
 							{/each}
 						</section>
 					{/each}
-				</div>
+
+					{#if data.permissions.canCreateDrafts}
+						<div class="draft-actions">
+							<button type="submit" class="btn-primary">Създай чернова за клиента</button>
+						</div>
+					{/if}
+				</form>
 			</section>
 		{/each}
 	</div>
@@ -194,6 +209,18 @@
 		background: #fff;
 		border-radius: 14px;
 		box-shadow: 0 2px 16px rgba(15, 23, 42, 0.06);
+	}
+
+	.alert {
+		padding: 12px 14px;
+		border-radius: 10px;
+		margin-bottom: 16px;
+	}
+
+	.alert.error {
+		background: #fef2f2;
+		border: 1px solid #fecaca;
+		color: #b91c1c;
 	}
 
 	.summary-card {
@@ -306,7 +333,7 @@
 
 	.table-head,
 	.task-row {
-		grid-template-columns: 2fr 1fr 1fr 1.3fr 1fr;
+		grid-template-columns: 56px 2fr 1fr 1fr 1.3fr 1fr;
 	}
 
 	.table-head {
@@ -324,6 +351,7 @@
 		border-top: 1px solid #eef2f7;
 		color: inherit;
 		text-decoration: none;
+		cursor: pointer;
 	}
 
 	.task-row:hover {
@@ -333,6 +361,21 @@
 	.task-main {
 		display: grid;
 		gap: 4px;
+	}
+
+	.task-select {
+		display: flex;
+		align-items: flex-start;
+		justify-content: center;
+	}
+
+	.task-select input {
+		margin-top: 4px;
+	}
+
+	.task-link {
+		color: #0f172a;
+		font-weight: 700;
 	}
 
 	.task-main small,
@@ -348,6 +391,12 @@
 
 	.empty-card {
 		padding: 24px;
+	}
+
+	.draft-actions {
+		display: flex;
+		justify-content: flex-end;
+		padding-top: 4px;
 	}
 
 	@media (max-width: 960px) {

@@ -1,7 +1,8 @@
-import { redirect } from '@sveltejs/kit';
+import { fail, redirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
+import { logAuditEvent } from '$lib/server/audit';
 import { canViewProjectFinancials } from '$lib/server/project-policy';
-import type { PageServerLoad } from './$types';
+import type { Actions, PageServerLoad } from './$types';
 
 function formatDateInput(date: Date) {
 	return date.toISOString().slice(0, 10);
@@ -23,16 +24,34 @@ function centsFromMinutes(rateCents: number | null, minutes: number) {
 	return Math.round((rateCents * minutes) / 60);
 }
 
-export const load: PageServerLoad = async ({ parent, url }) => {
-	const { user } = await parent();
-	if (!canViewProjectFinancials(user.role) || user.role === 'employee') {
-		redirect(302, '/dashboard');
-	}
+function canAccessInvoiceDrafting(role: string) {
+	return role === 'admin' || role === 'accountant';
+}
 
+type InvoiceableItem = {
+	id: string;
+	title: string;
+	status: string;
+	billingType: 'hourly' | 'flat_fee';
+	projectId: string;
+	projectName: string;
+	clientId: string;
+	clientName: string;
+	amountCents: number;
+	uninvoicedMinutes: number;
+	uninvoicedLogCount: number;
+	firstWorkDate: string | null;
+	lastWorkDate: string | null;
+	assignees: Array<{ id: string; firstName: string; lastName: string }>;
+};
+
+async function getInvoiceableContext(user: { id: string; role: string }, url: URL) {
 	const company = await db.company.findFirst({
 		select: {
 			id: true,
-			currency: true
+			currency: true,
+			defaultPaymentTermDays: true,
+			vatRateBasisPoints: true
 		}
 	});
 
@@ -61,7 +80,8 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 			client: {
 				select: {
 					id: true,
-					legalName: true
+					legalName: true,
+					defaultPaymentTermDays: true
 				}
 			}
 		}
@@ -81,6 +101,13 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 					...(clientId !== 'all' ? { clientId } : {}),
 					...(projectId !== 'all' ? { id: projectId } : {})
 				}
+			},
+			invoiceSelections: {
+				none: {
+					invoice: {
+						status: 'draft'
+					}
+				}
 			}
 		},
 		orderBy: [
@@ -95,7 +122,6 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 						select: {
 							id: true,
 							name: true,
-							primaryManagerUserId: true,
 							client: {
 								select: {
 									id: true,
@@ -133,7 +159,7 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 	});
 
 	const invoiceableItems = tasks
-		.map((task) => {
+		.map((task): InvoiceableItem | null => {
 			if (task.billingType === 'hourly') {
 				const uninvoicedMinutes = task.timeLogs.reduce((sum, log) => sum + log.durationMinutes, 0);
 				const amountCents = task.timeLogs.reduce(
@@ -149,7 +175,7 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 					id: task.id,
 					title: task.title,
 					status: task.status,
-					billingType: task.billingType,
+					billingType: 'hourly',
 					projectId: task.taskList.project.id,
 					projectName: task.taskList.project.name,
 					clientId: task.taskList.project.client.id,
@@ -172,7 +198,7 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 					id: task.id,
 					title: task.title,
 					status: task.status,
-					billingType: task.billingType,
+					billingType: 'flat_fee',
 					projectId: task.taskList.project.id,
 					projectName: task.taskList.project.name,
 					clientId: task.taskList.project.client.id,
@@ -192,7 +218,7 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 
 			return null;
 		})
-		.filter((item) => item != null);
+		.filter((item): item is InvoiceableItem => item !== null);
 
 	const grouped = visibleClients
 		.map((client) => {
@@ -216,7 +242,7 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 						items
 					};
 				})
-				.filter((project) => project != null);
+				.filter((project) => project !== null);
 
 			if (projects.length === 0) {
 				return null;
@@ -225,17 +251,19 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 			return {
 				id: client.id,
 				legalName: client.legalName,
+				defaultPaymentTermDays: client.defaultPaymentTermDays,
 				totalAmountCents: projects.reduce((sum, project) => sum + project.totalAmountCents, 0),
 				projects
 			};
 		})
-		.filter((client) => client != null);
+		.filter((client) => client !== null);
 
 	return {
 		company,
 		clients: visibleClients.filter((client) => visibleClientIds.includes(client.id)),
 		projects: visibleProjects,
 		grouped,
+		invoiceableItems,
 		filters: {
 			clientId,
 			projectId,
@@ -245,6 +273,215 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 			taskCount: invoiceableItems.length,
 			totalAmountCents: invoiceableItems.reduce((sum, item) => sum + item.amountCents, 0),
 			totalUninvoicedMinutes: invoiceableItems.reduce((sum, item) => sum + item.uninvoicedMinutes, 0)
+		},
+		permissions: {
+			canCreateDrafts: canAccessInvoiceDrafting(user.role)
 		}
 	};
+}
+
+export const load: PageServerLoad = async ({ parent, url }) => {
+	const { user } = await parent();
+	if (!canViewProjectFinancials(user.role) || user.role === 'employee') {
+		redirect(302, '/dashboard');
+	}
+
+	return getInvoiceableContext(user, url);
+};
+
+export const actions: Actions = {
+	createDraft: async ({ request, locals, getClientAddress, url }) => {
+		if (!locals.user || !canAccessInvoiceDrafting(locals.user.role)) {
+			return fail(403, { createDraftError: 'Нямате права за тази операция.' });
+		}
+
+		const user = locals.user;
+		const formData = await request.formData();
+		const clientId = String(formData.get('clientId') ?? '');
+		const selectedTaskIds = [...new Set(formData.getAll('taskIds').map(String).filter(Boolean))];
+
+		if (!clientId || selectedTaskIds.length === 0) {
+			return fail(422, {
+				createDraftError: 'Изберете поне една задача за чернова.',
+				createDraftClientId: clientId
+			});
+		}
+
+		const context = await getInvoiceableContext(user, url);
+		const selectableItems = context.invoiceableItems.filter(
+			(item) => item.clientId === clientId && selectedTaskIds.includes(item.id)
+		);
+
+		if (selectableItems.length !== selectedTaskIds.length) {
+			return fail(409, {
+				createDraftError: 'Някои от избраните задачи вече не са налични за фактуриране.',
+				createDraftClientId: clientId
+			});
+		}
+
+		const tasks = await db.task.findMany({
+			where: {
+				id: {
+					in: selectedTaskIds
+				}
+			},
+			include: {
+				taskList: {
+					include: {
+						project: {
+							include: {
+								client: {
+									select: {
+										id: true
+									}
+								}
+							}
+						}
+					}
+				},
+				timeLogs: {
+					where: {
+						invoicedAt: null
+					},
+					orderBy: [{ workDate: 'asc' }, { createdAt: 'asc' }],
+					select: {
+						id: true,
+						workDate: true,
+						description: true,
+						durationMinutes: true,
+						startMinuteOfDay: true,
+						endMinuteOfDay: true,
+						snapshotCostRateCents: true,
+						snapshotBillableRateCents: true,
+						userId: true
+					}
+				},
+				invoiceSelections: {
+					where: {
+						invoice: {
+							status: 'draft'
+						}
+					},
+					select: {
+						id: true
+					}
+				}
+			}
+		});
+
+		if (
+			tasks.length !== selectedTaskIds.length ||
+			tasks.some((task) => task.taskList.project.client.id !== clientId) ||
+			tasks.some((task) => task.invoiceSelections.length > 0)
+		) {
+			return fail(409, {
+				createDraftError: 'Задачите трябва да са от един клиент и да не са резервирани в друга чернова.',
+				createDraftClientId: clientId
+			});
+		}
+
+		const selectionSnapshots = tasks.map((task) => {
+			if (task.billingType === 'hourly') {
+				const amountCents = task.timeLogs.reduce(
+					(sum, log) => sum + centsFromMinutes(log.snapshotBillableRateCents, log.durationMinutes),
+					0
+				);
+
+				return {
+					taskId: task.id,
+					billingType: task.billingType,
+					amountCents,
+					hourlyUninvoicedValueCents: amountCents,
+					flatFeeValueCents: null,
+					firstWorkDate: task.timeLogs[0]?.workDate ?? null,
+					lastWorkDate: task.timeLogs.at(-1)?.workDate ?? null,
+					snapshotJson: {
+						taskTitle: task.title,
+						projectId: task.taskList.project.id,
+						projectName: task.taskList.project.name,
+						clientId,
+						timeLogs: task.timeLogs.map((log) => ({
+							id: log.id,
+							workDate: formatDateInput(log.workDate),
+							description: log.description,
+							durationMinutes: log.durationMinutes,
+							startMinuteOfDay: log.startMinuteOfDay,
+							endMinuteOfDay: log.endMinuteOfDay,
+							snapshotCostRateCents: log.snapshotCostRateCents,
+							snapshotBillableRateCents: log.snapshotBillableRateCents,
+							userId: log.userId
+						}))
+					}
+				};
+			}
+
+			return {
+				taskId: task.id,
+				billingType: task.billingType,
+				amountCents: task.flatFeeAmountCents ?? 0,
+				hourlyUninvoicedValueCents: null,
+				flatFeeValueCents: task.flatFeeAmountCents ?? 0,
+				firstWorkDate: null,
+				lastWorkDate: null,
+				snapshotJson: {
+					taskTitle: task.title,
+					projectId: task.taskList.project.id,
+					projectName: task.taskList.project.name,
+					clientId,
+					flatFeeAmountCents: task.flatFeeAmountCents ?? 0
+				}
+			};
+		});
+
+		const allDates = selectionSnapshots
+			.flatMap((selection) => [selection.firstWorkDate, selection.lastWorkDate])
+			.filter((date): date is Date => date instanceof Date);
+		const servicePeriodFrom = allDates.length > 0 ? allDates.reduce((min, date) => (date < min ? date : min)) : null;
+		const servicePeriodTo = allDates.length > 0 ? allDates.reduce((max, date) => (date > max ? date : max)) : null;
+		const netTotalCents = selectionSnapshots.reduce((sum, selection) => sum + selection.amountCents, 0);
+		const vatTotalCents = Math.round((netTotalCents * context.company.vatRateBasisPoints) / 10000);
+		const grossTotalCents = netTotalCents + vatTotalCents;
+
+		const invoice = await db.invoice.create({
+			data: {
+				clientId,
+				createdByUserId: user.id,
+				vatRateBasisPoints: context.company.vatRateBasisPoints,
+				netTotalCents,
+				vatTotalCents,
+				grossTotalCents,
+				servicePeriodFrom,
+				servicePeriodTo,
+				taskSelections: {
+					create: selectionSnapshots.map((selection) => ({
+						taskId: selection.taskId,
+						hourlyUninvoicedValueCents: selection.hourlyUninvoicedValueCents,
+						flatFeeValueCents: selection.flatFeeValueCents,
+						snapshotJson: selection.snapshotJson
+					}))
+				}
+			},
+			select: {
+				id: true
+			}
+		});
+
+		await logAuditEvent({
+			actorUserId: user.id,
+			eventType: 'invoice_draft_created',
+			entityType: 'invoice',
+			entityId: invoice.id,
+			newValueJson: {
+				clientId,
+				taskIds: selectedTaskIds,
+				netTotalCents,
+				vatTotalCents,
+				grossTotalCents
+			},
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		redirect(303, `/invoices?draftCreated=${invoice.id}`);
+	}
 };

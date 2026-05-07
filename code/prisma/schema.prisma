@@ -37,6 +37,7 @@ model User {
   taskAssignments TaskAssignment[]
   uploadedTaskAttachments TaskAttachment[] @relation("TaskAttachmentUploader")
   taskTimeLogs    TaskTimeLog[]
+  createdInvoices Invoice[]
   rateHistoryEntries UserRateHistory[]
   projectBillableRateOverrides ProjectMemberBillableRateOverride[]
 
@@ -172,6 +173,20 @@ enum TaskBillingType {
   non_billable
 }
 
+enum InvoiceStatus {
+  draft
+  issued
+  partially_paid
+  paid
+  overdue
+  voided
+}
+
+enum PaymentMethod {
+  bank_transfer
+  cash
+}
+
 model Client {
   id                String       @id @default(cuid())
   companyId         String
@@ -189,6 +204,7 @@ model Client {
 
   contacts          ClientContact[]
   projects          Project[]
+  invoices          Invoice[]
 
   @@unique([companyId, legalName])
   @@map("client")
@@ -275,6 +291,7 @@ model Task {
   comments           TaskComment[]
   attachments        TaskAttachment[]
   timeLogs           TaskTimeLog[]
+  invoiceSelections  InvoiceTaskSelection[]
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
 
@@ -360,6 +377,54 @@ model TaskTimeLog {
   @@index([taskId, workDate])
   @@index([userId, workDate])
   @@map("task_time_log")
+}
+
+model Invoice {
+  id                    String            @id @default(cuid())
+  clientId              String
+  client                Client            @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  status                InvoiceStatus     @default(draft)
+  invoiceNumber         String?
+  issueDate             DateTime?         @db.Date
+  dueDate               DateTime?         @db.Date
+  servicePeriodFrom     DateTime?         @db.Date
+  servicePeriodTo       DateTime?         @db.Date
+  paymentMethod         PaymentMethod     @default(bank_transfer)
+  vatRateBasisPoints    Int               @default(2000)
+  netTotalCents         Int               @default(0)
+  vatTotalCents         Int               @default(0)
+  grossTotalCents       Int               @default(0)
+  paidTotalCents        Int               @default(0)
+  isStaleDraft          Boolean           @default(false)
+  lastUpdatedAt         DateTime          @default(now())
+  issuedSnapshotJson    Json?
+  voidReason            String?
+  createdByUserId       String
+  createdByUser         User              @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  taskSelections        InvoiceTaskSelection[]
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  @@index([clientId, status, createdAt])
+  @@index([createdByUserId, createdAt])
+  @@map("invoice")
+}
+
+model InvoiceTaskSelection {
+  id                           String   @id @default(cuid())
+  invoiceId                    String
+  invoice                      Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  taskId                       String
+  task                         Task     @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  snapshotTakenAt              DateTime @default(now())
+  hourlyUninvoicedValueCents   Int?
+  flatFeeValueCents            Int?
+  snapshotJson                 Json?
+  createdAt                    DateTime @default(now())
+
+  @@unique([invoiceId, taskId])
+  @@index([taskId, createdAt])
+  @@map("invoice_task_selection")
 }
 
 model UserRateHistory {
