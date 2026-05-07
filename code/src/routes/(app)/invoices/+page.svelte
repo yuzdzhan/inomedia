@@ -13,6 +13,19 @@
 			| null;
 	}
 
+	function paymentFormState() {
+		return form as
+			| {
+					paymentInvoiceId?: string;
+					paymentError?: string;
+					paymentSuccess?: string;
+					paymentMethodInvoiceId?: string;
+					paymentMethodError?: string;
+					paymentMethodSuccess?: string;
+			  }
+			| null;
+	}
+
 	function formatMoney(value: number) {
 		return `${(value / 100).toFixed(2)} ${data.company.currency}`;
 	}
@@ -43,6 +56,30 @@
 		flatFeeValueCents: number | null;
 	}) {
 		return selection.hourlyUninvoicedValueCents ?? selection.flatFeeValueCents ?? 0;
+	}
+
+	function invoiceStatusLabel(status: string) {
+		const labels: Record<string, string> = {
+			issued: 'Издадена',
+			partially_paid: 'Частично платена',
+			paid: 'Платена',
+			overdue: 'Просрочена',
+			draft: 'Чернова',
+			voided: 'Анулирана'
+		};
+		return labels[status] ?? status;
+	}
+
+	function paymentMethodLabel(method: string) {
+		return method === 'cash' ? 'В брой' : 'Банков превод';
+	}
+
+	function isFinanceUser() {
+		return data.user?.role === 'admin' || data.user?.role === 'accountant';
+	}
+
+	function todayInputValue() {
+		return new Date().toISOString().slice(0, 10);
 	}
 </script>
 
@@ -190,31 +227,140 @@
 {/if}
 
 {#if data.issuedInvoices.length > 0}
-	<section class="card issued-card">
-		<header class="section-header">
-			<div>
-				<div class="eyebrow">Издадени</div>
-				<h2>Последни фактури</h2>
-			</div>
-		</header>
+	<div class="issued-list">
+		{#each data.issuedInvoices as invoice}
+			<section class="card issued-card">
+				<header class="issued-card-header">
+					<div class="issued-card-title">
+						<div class="eyebrow">№ {invoice.invoiceNumber ?? 'Без номер'}</div>
+						<h2>{invoice.client.legalName}</h2>
+						<div class="issued-meta">
+							Издадена: {formatDate(invoice.issueDate)}
+							{#if invoice.dueDate} · Падеж: {formatDate(invoice.dueDate)}{/if}
+						</div>
+					</div>
+					<div class="issued-summary">
+						<div class="summary-item">
+							<span class="meta-label">Обща сума</span>
+							<strong>{formatMoney(invoice.grossTotalCents)}</strong>
+						</div>
+						<div class="summary-item">
+							<span class="meta-label">Платено</span>
+							<strong class="paid-amount">{formatMoney(invoice.paidTotalCents)}</strong>
+						</div>
+						<div class="summary-item">
+							<span class="meta-label">Остатък</span>
+							<strong class="remaining-amount">{formatMoney(invoice.grossTotalCents - invoice.paidTotalCents)}</strong>
+						</div>
+						<div class="summary-item">
+							<span class="meta-label">Статус</span>
+							<span class="status-badge status-{invoice.status}">{invoiceStatusLabel(invoice.status)}</span>
+						</div>
+					</div>
+					<div class="issued-card-actions">
+						<a class="btn-secondary" href={`/invoices/${invoice.id}/pdf`} target="_blank" rel="noreferrer">PDF</a>
+					</div>
+				</header>
 
-		<div class="issued-list">
-			{#each data.issuedInvoices as invoice}
-				<div class="issued-row">
-					<div>
-						<strong>№ {invoice.invoiceNumber ?? 'Без номер'}</strong>
-						<div class="issued-meta">{invoice.client.legalName} · {formatDate(invoice.issueDate)}</div>
+				{#if paymentFormState()?.paymentInvoiceId === invoice.id && paymentFormState()?.paymentError}
+					<div class="alert error">{paymentFormState()?.paymentError}</div>
+				{/if}
+				{#if paymentFormState()?.paymentInvoiceId === invoice.id && paymentFormState()?.paymentSuccess}
+					<div class="alert success">{paymentFormState()?.paymentSuccess}</div>
+				{/if}
+				{#if paymentFormState()?.paymentMethodInvoiceId === invoice.id && paymentFormState()?.paymentMethodError}
+					<div class="alert error">{paymentFormState()?.paymentMethodError}</div>
+				{/if}
+				{#if paymentFormState()?.paymentMethodInvoiceId === invoice.id && paymentFormState()?.paymentMethodSuccess}
+					<div class="alert success">{paymentFormState()?.paymentMethodSuccess}</div>
+				{/if}
+
+				{#if invoice.payments.length > 0}
+					<div class="payments-section">
+						<div class="eyebrow payments-title">Плащания</div>
+						<div class="payments-list">
+							{#each invoice.payments as payment}
+								<div class="payment-row">
+									<span class="payment-date">{formatDate(payment.paymentDate)}</span>
+									<span class="payment-method">{paymentMethodLabel(payment.paymentMethod)}</span>
+									{#if payment.notes}<span class="payment-notes">{payment.notes}</span>{/if}
+									<span class="payment-amount">{formatMoney(payment.amountCents)}</span>
+								</div>
+							{/each}
+						</div>
 					</div>
-					<div class="issued-actions">
-						<span class="issued-amount">{formatMoney(invoice.grossTotalCents)}</span>
-						<a class="btn-secondary" href={`/invoices/${invoice.id}/pdf`} target="_blank" rel="noreferrer">
-							PDF
-						</a>
+				{/if}
+
+				{#if isFinanceUser() && invoice.payments.length === 0 && invoice.status === 'issued'}
+					<form method="POST" action="?/updatePaymentMethod" class="payment-method-form">
+						<input type="hidden" name="invoiceId" value={invoice.id} />
+						<div class="field">
+							<label for={`paymentMethod-${invoice.id}`}>Метод на плащане</label>
+							<select id={`paymentMethod-${invoice.id}`} name="paymentMethod">
+								<option value="bank_transfer" selected={invoice.paymentMethod === 'bank_transfer'}>Банков превод</option>
+								<option value="cash" selected={invoice.paymentMethod === 'cash'}>В брой</option>
+							</select>
+						</div>
+						<button class="btn-secondary" type="submit">Запази метод</button>
+					</form>
+				{:else if invoice.payments.length === 0}
+					<div class="payment-method-display">
+						<span class="meta-label">Метод на плащане</span>
+						<span>{paymentMethodLabel(invoice.paymentMethod)}</span>
 					</div>
-				</div>
-			{/each}
-		</div>
-	</section>
+				{/if}
+
+				{#if isFinanceUser() && (invoice.status === 'issued' || invoice.status === 'partially_paid')}
+					<form method="POST" action="?/recordPayment" class="record-payment-form">
+						<input type="hidden" name="invoiceId" value={invoice.id} />
+						<div class="payment-fields">
+							<div class="field">
+								<label for={`amount-${invoice.id}`}>Сума (EUR)</label>
+								<input
+									id={`amount-${invoice.id}`}
+									name="amount"
+									type="number"
+									min="0.01"
+									step="0.01"
+									placeholder="0.00"
+									required
+								/>
+							</div>
+							<div class="field">
+								<label for={`paymentDate-${invoice.id}`}>Дата</label>
+								<input
+									id={`paymentDate-${invoice.id}`}
+									name="paymentDate"
+									type="date"
+									value={todayInputValue()}
+									required
+								/>
+							</div>
+							<div class="field">
+								<label for={`recordPaymentMethod-${invoice.id}`}>Метод</label>
+								<select id={`recordPaymentMethod-${invoice.id}`} name="paymentMethod">
+									<option value="bank_transfer" selected={invoice.paymentMethod === 'bank_transfer'}>Банков превод</option>
+									<option value="cash" selected={invoice.paymentMethod === 'cash'}>В брой</option>
+								</select>
+							</div>
+							<div class="field">
+								<label for={`notes-${invoice.id}`}>Бележки (по желание)</label>
+								<input
+									id={`notes-${invoice.id}`}
+									name="notes"
+									type="text"
+									placeholder="Бележка към плащането"
+								/>
+							</div>
+						</div>
+						<div class="record-payment-footer">
+							<button class="btn-primary" type="submit">Запиши плащане</button>
+						</div>
+					</form>
+				{/if}
+			</section>
+		{/each}
+	</div>
 {/if}
 
 <style>
@@ -310,8 +456,6 @@
 	.selection-head,
 	.draft-actions,
 	.draft-buttons,
-	.issued-row,
-	.issued-actions,
 	.section-header {
 		display: flex;
 		justify-content: space-between;
@@ -356,7 +500,8 @@
 	}
 
 	input,
-	textarea {
+	textarea,
+	select {
 		width: 100%;
 		border: 1px solid #cbd5e1;
 		border-radius: 10px;
@@ -376,7 +521,6 @@
 	}
 
 	.totals-field strong,
-	.issued-amount,
 	.selection-amount {
 		font-size: 1.05rem;
 		color: #0f172a;
@@ -390,8 +534,7 @@
 		color: #64748b;
 	}
 
-	.selection-card,
-	.issued-row {
+	.selection-card {
 		border: 1px solid #e2e8f0;
 		border-radius: 14px;
 		padding: 16px;
@@ -407,10 +550,171 @@
 		padding-top: 4px;
 	}
 
-	.draft-buttons,
-	.issued-actions {
+	.draft-buttons {
 		justify-content: flex-end;
 		align-items: center;
+	}
+
+	/* Issued invoices */
+
+	.issued-card {
+		display: grid;
+		gap: 16px;
+	}
+
+	.issued-card-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-start;
+		gap: 16px;
+	}
+
+	.issued-card-title h2 {
+		margin: 4px 0;
+	}
+
+	.issued-summary {
+		display: flex;
+		gap: 20px;
+		align-items: flex-start;
+	}
+
+	.summary-item {
+		display: grid;
+		gap: 4px;
+		text-align: right;
+	}
+
+	.summary-item strong {
+		font-size: 1rem;
+		color: #0f172a;
+		font-weight: 700;
+	}
+
+	.paid-amount {
+		color: #166534;
+	}
+
+	.remaining-amount {
+		color: #92400e;
+	}
+
+	.issued-card-actions {
+		display: flex;
+		gap: 8px;
+		align-items: flex-start;
+	}
+
+	.status-badge {
+		display: inline-block;
+		padding: 3px 10px;
+		border-radius: 999px;
+		font-size: 0.8rem;
+		font-weight: 700;
+	}
+
+	.status-issued {
+		background: #eff6ff;
+		color: #1d4ed8;
+	}
+
+	.status-partially_paid {
+		background: #fffbeb;
+		color: #92400e;
+	}
+
+	.status-paid {
+		background: #f0fdf4;
+		color: #166534;
+	}
+
+	.status-overdue {
+		background: #fef2f2;
+		color: #b91c1c;
+	}
+
+	.payments-section {
+		border-top: 1px solid #e2e8f0;
+		padding-top: 14px;
+	}
+
+	.payments-title {
+		margin-bottom: 10px;
+	}
+
+	.payments-list {
+		display: grid;
+		gap: 8px;
+	}
+
+	.payment-row {
+		display: flex;
+		gap: 12px;
+		align-items: center;
+		padding: 10px 14px;
+		background: #f8fafc;
+		border-radius: 10px;
+		font-size: 0.92rem;
+	}
+
+	.payment-date {
+		font-weight: 600;
+		color: #0f172a;
+	}
+
+	.payment-method {
+		color: #64748b;
+	}
+
+	.payment-notes {
+		color: #64748b;
+		flex: 1;
+		font-style: italic;
+	}
+
+	.payment-amount {
+		font-weight: 700;
+		color: #0f172a;
+		margin-left: auto;
+	}
+
+	.payment-method-form {
+		display: flex;
+		align-items: flex-end;
+		gap: 12px;
+		padding-top: 8px;
+		border-top: 1px solid #e2e8f0;
+	}
+
+	.payment-method-form .field {
+		flex: 0 0 200px;
+	}
+
+	.payment-method-display {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding-top: 8px;
+		border-top: 1px solid #e2e8f0;
+		font-size: 0.92rem;
+	}
+
+	.record-payment-form {
+		border-top: 1px solid #e2e8f0;
+		padding-top: 14px;
+		display: grid;
+		gap: 12px;
+	}
+
+	.payment-fields {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 12px;
+	}
+
+	.record-payment-footer {
+		display: flex;
+		justify-content: flex-end;
 	}
 
 	@media (max-width: 960px) {
@@ -419,19 +723,29 @@
 		.selection-head,
 		.draft-actions,
 		.draft-buttons,
-		.issued-row,
-		.issued-actions,
+		.issued-card-header,
+		.issued-summary,
 		.section-header {
 			flex-direction: column;
 		}
 
-		.meta-grid {
+		.meta-grid,
+		.payment-fields {
 			grid-template-columns: 1fr;
 		}
 
 		.selection-amount,
 		.draft-totals {
 			text-align: left;
+		}
+
+		.summary-item {
+			text-align: left;
+		}
+
+		.payment-method-form {
+			flex-direction: column;
+			align-items: flex-start;
 		}
 	}
 </style>

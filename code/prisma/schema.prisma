@@ -40,6 +40,7 @@ model User {
   createdInvoices Invoice[]
   rateHistoryEntries UserRateHistory[]
   projectBillableRateOverrides ProjectMemberBillableRateOverride[]
+  recordedPayments InvoicePayment[] @relation("InvoicePaymentRecordedBy")
 
   @@map("user")
 }
@@ -405,12 +406,29 @@ model Invoice {
   createdByUserId       String
   createdByUser         User              @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
   taskSelections        InvoiceTaskSelection[]
+  payments              InvoicePayment[]
   createdAt             DateTime          @default(now())
   updatedAt             DateTime          @updatedAt
 
   @@index([clientId, status, createdAt])
   @@index([createdByUserId, createdAt])
   @@map("invoice")
+}
+
+model InvoicePayment {
+  id               String        @id @default(cuid())
+  invoiceId        String
+  invoice          Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  amountCents      Int
+  paymentDate      DateTime      @db.Date
+  paymentMethod    PaymentMethod
+  notes            String?
+  recordedByUserId String
+  recordedByUser   User          @relation("InvoicePaymentRecordedBy", fields: [recordedByUserId], references: [id], onDelete: Restrict)
+  createdAt        DateTime      @default(now())
+
+  @@index([invoiceId, paymentDate])
+  @@map("invoice_payment")
 }
 
 model InvoiceTaskSelection {

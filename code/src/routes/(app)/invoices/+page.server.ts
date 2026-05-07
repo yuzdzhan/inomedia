@@ -97,7 +97,7 @@ async function getDrafts() {
 async function getIssuedInvoices() {
 	return db.invoice.findMany({
 		where: {
-			status: 'issued'
+			status: { in: ['issued', 'partially_paid', 'paid', 'overdue'] }
 		},
 		orderBy: [{ issueDate: 'desc' }, { createdAt: 'desc' }],
 		take: 20,
@@ -105,11 +105,25 @@ async function getIssuedInvoices() {
 			id: true,
 			invoiceNumber: true,
 			issueDate: true,
+			dueDate: true,
 			grossTotalCents: true,
+			paidTotalCents: true,
+			paymentMethod: true,
+			status: true,
 			issuedPdfFilename: true,
 			client: {
 				select: {
 					legalName: true
+				}
+			},
+			payments: {
+				orderBy: [{ paymentDate: 'asc' }, { createdAt: 'asc' }],
+				select: {
+					id: true,
+					amountCents: true,
+					paymentDate: true,
+					paymentMethod: true,
+					notes: true
 				}
 			}
 		}
@@ -632,5 +646,140 @@ export const actions: Actions = {
 		});
 
 		redirect(303, `/invoices?issued=${draft.id}`);
+	},
+
+	recordPayment: async ({ request, locals, getClientAddress }) => {
+		if (!locals.user || !canManageInvoices(locals.user.role)) {
+			return fail(403, { paymentError: 'Нямате права за тази операция.' });
+		}
+
+		const formData = await request.formData();
+		const invoiceId = String(formData.get('invoiceId') ?? '');
+		const amountInput = String(formData.get('amount') ?? '');
+		const paymentDateInput = String(formData.get('paymentDate') ?? '');
+		const notesInput = String(formData.get('notes') ?? '').trim();
+		const paymentMethodInput = String(formData.get('paymentMethod') ?? '');
+
+		const amountCents = Math.round(parseFloat(amountInput) * 100);
+		if (!amountInput || isNaN(amountCents) || amountCents <= 0) {
+			return fail(422, { paymentError: 'Сумата трябва да е по-голяма от нула.', paymentInvoiceId: invoiceId });
+		}
+
+		const paymentDate = parseOptionalDateInput(paymentDateInput);
+		if (!paymentDate) {
+			return fail(422, { paymentError: 'Невалидна дата на плащане.', paymentInvoiceId: invoiceId });
+		}
+
+		const validPaymentMethods = ['bank_transfer', 'cash'] as const;
+		if (!validPaymentMethods.includes(paymentMethodInput as (typeof validPaymentMethods)[number])) {
+			return fail(422, { paymentError: 'Невалиден метод на плащане.', paymentInvoiceId: invoiceId });
+		}
+		const paymentMethod = paymentMethodInput as 'bank_transfer' | 'cash';
+
+		const invoice = await db.invoice.findFirst({
+			where: { id: invoiceId, status: { in: ['issued', 'partially_paid'] } },
+			select: { id: true, grossTotalCents: true, paidTotalCents: true, status: true }
+		});
+
+		if (!invoice) {
+			return fail(404, { paymentError: 'Фактурата не е намерена или не може да получава плащания.', paymentInvoiceId: invoiceId });
+		}
+
+		await db.$transaction(async (tx) => {
+			await tx.invoicePayment.create({
+				data: {
+					invoiceId: invoice.id,
+					amountCents,
+					paymentDate,
+					paymentMethod,
+					notes: notesInput || null,
+					recordedByUserId: locals.user!.id
+				}
+			});
+
+			const newPaidTotal = invoice.paidTotalCents + amountCents;
+			const newStatus = newPaidTotal >= invoice.grossTotalCents ? 'paid' : 'partially_paid';
+
+			await tx.invoice.update({
+				where: { id: invoice.id },
+				data: {
+					paidTotalCents: newPaidTotal,
+					status: newStatus,
+					lastUpdatedAt: new Date()
+				}
+			});
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'invoice_payment_recorded',
+			entityType: 'invoice',
+			entityId: invoiceId,
+			newValueJson: {
+				amountCents,
+				paymentDate: paymentDate.toISOString(),
+				paymentMethod
+			},
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return { paymentSuccess: 'Плащането е записано.', paymentInvoiceId: invoiceId };
+	},
+
+	updatePaymentMethod: async ({ request, locals, getClientAddress }) => {
+		if (!locals.user || !canManageInvoices(locals.user.role)) {
+			return fail(403, { paymentMethodError: 'Нямате права за тази операция.' });
+		}
+
+		const formData = await request.formData();
+		const invoiceId = String(formData.get('invoiceId') ?? '');
+		const paymentMethodInput = String(formData.get('paymentMethod') ?? '');
+
+		const validPaymentMethods = ['bank_transfer', 'cash'] as const;
+		if (!validPaymentMethods.includes(paymentMethodInput as (typeof validPaymentMethods)[number])) {
+			return fail(422, { paymentMethodError: 'Невалиден метод на плащане.', paymentMethodInvoiceId: invoiceId });
+		}
+		const paymentMethod = paymentMethodInput as 'bank_transfer' | 'cash';
+
+		const invoice = await db.invoice.findFirst({
+			where: { id: invoiceId, status: 'issued' },
+			select: {
+				id: true,
+				paymentMethod: true,
+				_count: { select: { payments: true } }
+			}
+		});
+
+		if (!invoice) {
+			return fail(404, { paymentMethodError: 'Фактурата не е намерена.', paymentMethodInvoiceId: invoiceId });
+		}
+
+		if (invoice._count.payments > 0) {
+			return fail(409, {
+				paymentMethodError: 'Методът на плащане не може да се промени след като има записани плащания.',
+				paymentMethodInvoiceId: invoiceId
+			});
+		}
+
+		const oldPaymentMethod = invoice.paymentMethod;
+
+		await db.invoice.update({
+			where: { id: invoice.id },
+			data: { paymentMethod, lastUpdatedAt: new Date() }
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'invoice_payment_method_updated',
+			entityType: 'invoice',
+			entityId: invoiceId,
+			oldValueJson: { paymentMethod: oldPaymentMethod },
+			newValueJson: { paymentMethod },
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return { paymentMethodSuccess: 'Методът на плащане е обновен.', paymentMethodInvoiceId: invoiceId };
 	}
 };
