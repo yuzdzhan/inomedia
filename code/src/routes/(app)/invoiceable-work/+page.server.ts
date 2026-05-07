@@ -57,6 +57,10 @@ async function getInvoiceableContext(user: { id: string; role: string }, url: UR
 	const clientId = url.searchParams.get('clientId') ?? 'all';
 	const projectId = url.searchParams.get('projectId') ?? 'all';
 	const billingType = normalizeBillingType(url.searchParams.get('billingType'));
+	const userId = (user.role === 'admin' || user.role === 'manager') ? (url.searchParams.get('userId') ?? 'all') : 'all';
+	const workDateFrom = url.searchParams.get('dateFrom') ?? '';
+	const workDateTo = url.searchParams.get('dateTo') ?? '';
+
 	const scopeWhere = {
 		client: {
 			companyId: company.id
@@ -129,7 +133,16 @@ async function getInvoiceableContext(user: { id: string; role: string }, url: UR
 			},
 			timeLogs: {
 				where: {
-					invoicedAt: null
+					invoicedAt: null,
+					...(userId !== 'all' ? { userId } : {}),
+					...(workDateFrom || workDateTo
+						? {
+								workDate: {
+									...(workDateFrom ? { gte: new Date(workDateFrom) } : {}),
+									...(workDateTo ? { lte: new Date(workDateTo) } : {})
+								}
+							}
+						: {})
 				},
 				orderBy: [{ workDate: 'asc' }, { createdAt: 'asc' }],
 				select: {
@@ -253,16 +266,30 @@ async function getInvoiceableContext(user: { id: string; role: string }, url: UR
 		})
 		.filter((client) => client !== null);
 
+	// Load users for userId filter (admin/manager only)
+	const users =
+		user.role === 'admin' || user.role === 'manager'
+			? await db.user.findMany({
+					where: { status: 'active' },
+					orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+					select: { id: true, firstName: true, lastName: true }
+				})
+			: [];
+
 	return {
 		company,
 		clients: visibleClients.filter((client) => visibleClientIds.includes(client.id)),
 		projects: visibleProjects,
 		grouped,
 		invoiceableItems,
+		users,
 		filters: {
 			clientId,
 			projectId,
-			billingType
+			billingType,
+			userId,
+			dateFrom: workDateFrom,
+			dateTo: workDateTo
 		},
 		summary: {
 			taskCount: invoiceableItems.length,

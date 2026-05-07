@@ -98,6 +98,27 @@
 				{/each}
 			</select>
 		</div>
+		{#if data.users.length > 0}
+			<div class="field">
+				<label for="userId">Изпълнител</label>
+				<select id="userId" name="userId">
+					<option value="all" selected={data.filters.userId === 'all'}>Всички изпълнители</option>
+					{#each data.users as u}
+						<option value={u.id} selected={data.filters.userId === u.id}>
+							{u.firstName} {u.lastName}
+						</option>
+					{/each}
+				</select>
+			</div>
+		{/if}
+		<div class="field">
+			<label for="dateFrom">Работа от дата</label>
+			<input id="dateFrom" type="date" name="dateFrom" value={data.filters.dateFrom} />
+		</div>
+		<div class="field">
+			<label for="dateTo">Работа до дата</label>
+			<input id="dateTo" type="date" name="dateTo" value={data.filters.dateTo} />
+		</div>
 		<div class="filter-actions">
 			<button type="submit" class="btn-primary">Приложи</button>
 			<a class="btn-secondary" href="/invoiceable-work">Изчисти</a>
@@ -245,7 +266,7 @@
 
 	.filter-grid {
 		display: grid;
-		grid-template-columns: repeat(4, minmax(0, 1fr));
+		grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
 		gap: 14px;
 		align-items: end;
 	}

@@ -95,13 +95,45 @@ async function getDrafts() {
 	});
 }
 
-async function getIssuedInvoices() {
+async function getIssuedInvoices(filters: {
+	status: string;
+	clientId: string;
+	dateFrom: string;
+	dateTo: string;
+	search: string;
+}) {
+	const nonDraftStatuses = ['issued', 'partially_paid', 'paid', 'overdue', 'voided'] as const;
+	const validStatuses = nonDraftStatuses.filter((s) => s === filters.status);
+
+	const statusFilter =
+		filters.status && validStatuses.length > 0
+			? { status: validStatuses[0] }
+			: { status: { in: nonDraftStatuses } };
+
+	const where: Record<string, unknown> = {
+		...statusFilter,
+		...(filters.clientId ? { clientId: filters.clientId } : {}),
+		...(filters.dateFrom || filters.dateTo
+			? {
+					issueDate: {
+						...(filters.dateFrom ? { gte: new Date(filters.dateFrom) } : {}),
+						...(filters.dateTo ? { lte: new Date(filters.dateTo) } : {})
+					}
+				}
+			: {}),
+		...(filters.search
+			? {
+					OR: [
+						{ invoiceNumber: { contains: filters.search, mode: 'insensitive' } },
+						{ client: { legalName: { contains: filters.search, mode: 'insensitive' } } }
+					]
+				}
+			: {})
+	};
+
 	return db.invoice.findMany({
-		where: {
-			status: { in: ['issued', 'partially_paid', 'paid', 'overdue'] }
-		},
+		where,
 		orderBy: [{ issueDate: 'desc' }, { createdAt: 'desc' }],
-		take: 20,
 		select: {
 			id: true,
 			invoiceNumber: true,
@@ -271,12 +303,31 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 	}
 
 	const company = await getCompanyOrRedirect();
-	const [drafts, issuedInvoices] = await Promise.all([getDrafts(), getIssuedInvoices()]);
+
+	const filters = {
+		status: url.searchParams.get('status') ?? '',
+		clientId: url.searchParams.get('clientId') ?? '',
+		dateFrom: url.searchParams.get('dateFrom') ?? '',
+		dateTo: url.searchParams.get('dateTo') ?? '',
+		search: url.searchParams.get('search') ?? ''
+	};
+
+	const [drafts, issuedInvoices, clients] = await Promise.all([
+		getDrafts(),
+		getIssuedInvoices(filters),
+		db.client.findMany({
+			where: { companyId: company.id, status: 'active' },
+			orderBy: { legalName: 'asc' },
+			select: { id: true, legalName: true }
+		})
+	]);
 
 	return {
 		company,
 		drafts,
 		issuedInvoices,
+		clients,
+		filters,
 		draftCreated: url.searchParams.get('draftCreated'),
 		issuedInvoiceId: url.searchParams.get('issued')
 	};

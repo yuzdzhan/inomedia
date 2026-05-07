@@ -226,6 +226,54 @@
 	</div>
 {/if}
 
+<section class="issued-section">
+	<h2 class="section-title">Издадени фактури</h2>
+
+	<form method="GET" class="filter-bar">
+		<select name="status" onchange="this.form.submit()">
+			<option value="" selected={!data.filters.status}>Всички статуси</option>
+			<option value="issued" selected={data.filters.status === 'issued'}>Издадена</option>
+			<option value="partially_paid" selected={data.filters.status === 'partially_paid'}>Частично платена</option>
+			<option value="paid" selected={data.filters.status === 'paid'}>Платена</option>
+			<option value="overdue" selected={data.filters.status === 'overdue'}>Просрочена</option>
+			<option value="voided" selected={data.filters.status === 'voided'}>Анулирана</option>
+		</select>
+
+		<select name="clientId" onchange="this.form.submit()">
+			<option value="" selected={!data.filters.clientId}>Всички клиенти</option>
+			{#each data.clients as client}
+				<option value={client.id} selected={data.filters.clientId === client.id}>{client.legalName}</option>
+			{/each}
+		</select>
+
+		<input
+			type="date"
+			name="dateFrom"
+			value={data.filters.dateFrom}
+			placeholder="От дата"
+			title="Издадена от"
+		/>
+
+		<input
+			type="date"
+			name="dateTo"
+			value={data.filters.dateTo}
+			placeholder="До дата"
+			title="Издадена до"
+		/>
+
+		<input
+			type="text"
+			name="search"
+			value={data.filters.search}
+			placeholder="Търсене по номер или клиент"
+		/>
+
+		<button type="submit" class="btn-secondary">Филтрирай</button>
+		<a href="/invoices" class="btn-secondary">Изчисти</a>
+	</form>
+</section>
+
 {#if data.issuedInvoices.length > 0}
 	<div class="issued-list">
 		{#each data.issuedInvoices as invoice}
@@ -715,6 +763,43 @@
 	.record-payment-footer {
 		display: flex;
 		justify-content: flex-end;
+	}
+
+	.issued-section {
+		margin-bottom: 0;
+	}
+
+	.section-title {
+		margin-bottom: 12px;
+	}
+
+	.filter-bar {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		align-items: center;
+		margin-bottom: 16px;
+		padding: 12px 16px;
+		background: #f8fafc;
+		border: 1px solid #e2e8f0;
+		border-radius: 8px;
+	}
+
+	.filter-bar select,
+	.filter-bar input[type='date'],
+	.filter-bar input[type='text'] {
+		padding: 6px 10px;
+		border: 1px solid #cbd5e1;
+		border-radius: 5px;
+		font-size: 0.875rem;
+		font-family: inherit;
+		background: white;
+		width: auto;
+		border-radius: 5px;
+	}
+
+	.filter-bar input[type='text'] {
+		min-width: 200px;
 	}
 
 	@media (max-width: 960px) {

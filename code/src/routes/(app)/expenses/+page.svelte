@@ -233,6 +233,55 @@
 		<div class="alert success">Разходът е върнат като неплатен и плащането е анулирано.</div>
 	{/if}
 
+	<form method="GET" class="filter-bar">
+		<select name="status" onchange="this.form.submit()">
+			<option value="" selected={!data.filters.status}>Всички статуси</option>
+			<option value="unpaid" selected={data.filters.status === 'unpaid'}>Неплатен</option>
+			<option value="paid" selected={data.filters.status === 'paid'}>Платен</option>
+		</select>
+
+		<select name="categoryId" onchange="this.form.submit()">
+			<option value="" selected={!data.filters.categoryId}>Всички категории</option>
+			{#each data.categories as cat}
+				<option value={cat.id} selected={data.filters.categoryId === cat.id}>{cat.name}</option>
+			{/each}
+		</select>
+
+		{#if !data.permissions.isManager}
+			<select name="clientId" onchange="this.form.submit()">
+				<option value="" selected={!data.filters.clientId}>Всички клиенти</option>
+				{#each data.clients as client}
+					<option value={client.id} selected={data.filters.clientId === client.id}>{client.legalName}</option>
+				{/each}
+			</select>
+		{/if}
+
+		<select name="projectId" onchange="this.form.submit()">
+			<option value="" selected={!data.filters.projectId}>Всички проекти</option>
+			{#each data.allVisibleProjects as project}
+				<option value={project.id} selected={data.filters.projectId === project.id}>
+					{project.client.legalName} / {project.name}
+				</option>
+			{/each}
+		</select>
+
+		<input
+			type="date"
+			name="dateFrom"
+			value={data.filters.dateFrom}
+			title="Разход от дата"
+		/>
+		<input
+			type="date"
+			name="dateTo"
+			value={data.filters.dateTo}
+			title="Разход до дата"
+		/>
+
+		<button type="submit" class="btn-primary">Филтрирай</button>
+		<a href="/expenses" class="btn-secondary">Изчисти</a>
+	</form>
+
 	<div class="section-actions">
 		{#if data.permissions.canManageProject}
 			<button class="btn-primary" onclick={() => (showCreateForm = !showCreateForm)}>
@@ -963,6 +1012,29 @@
 {/if}
 
 <style>
+	.filter-bar {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		align-items: center;
+		margin-bottom: 16px;
+		padding: 12px 16px;
+		background: #f8fafc;
+		border: 1px solid #e2e8f0;
+		border-radius: 8px;
+	}
+
+	.filter-bar select,
+	.filter-bar input[type='date'] {
+		padding: 6px 10px;
+		border: 1px solid #cbd5e1;
+		border-radius: 5px;
+		font-size: 0.875rem;
+		font-family: inherit;
+		background: white;
+		width: auto;
+	}
+
 	.page-header {
 		display: flex;
 		align-items: center;

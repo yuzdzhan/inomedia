@@ -409,7 +409,50 @@
 
 <!-- Recent Ledger Entries -->
 <section class="ledger-section">
-	<h2>Последни движения</h2>
+	<h2>Движения</h2>
+
+	<form method="GET" class="filter-bar">
+		<select name="containerId" onchange="this.form.submit()">
+			<option value="" selected={!data.filters.containerId}>Всички сметки</option>
+			{#if data.bank}
+				<option value={data.bank.id} selected={data.filters.containerId === data.bank.id}>Банка</option>
+			{/if}
+			{#if data.cashbox}
+				<option value={data.cashbox.id} selected={data.filters.containerId === data.cashbox.id}>Каса</option>
+			{/if}
+		</select>
+
+		<select name="entryType" onchange="this.form.submit()">
+			<option value="" selected={!data.filters.entryType}>Всички типове</option>
+			{#each Object.entries(entryTypeLabels) as [value, label]}
+				<option value={value} selected={data.filters.entryType === value}>{label}</option>
+			{/each}
+		</select>
+
+		<input
+			type="date"
+			name="dateFrom"
+			value={data.filters.dateFrom}
+			title="От дата"
+		/>
+		<input
+			type="date"
+			name="dateTo"
+			value={data.filters.dateTo}
+			title="До дата"
+		/>
+
+		<input
+			type="text"
+			name="search"
+			value={data.filters.search}
+			placeholder="Търсене в описание"
+			class="search-input"
+		/>
+
+		<button type="submit" class="btn btn-secondary">Филтрирай</button>
+		<a href="/cashflow" class="btn btn-secondary">Изчисти</a>
+	</form>
 
 	{#if data.recentEntries.length === 0}
 		<p class="empty-state">Няма записани движения.</p>
@@ -446,6 +489,34 @@
 </section>
 
 <style>
+	.filter-bar {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		align-items: center;
+		margin-bottom: 16px;
+		padding: 12px 16px;
+		background: #f8fafc;
+		border: 1px solid #e2e8f0;
+		border-radius: 8px;
+	}
+
+	.filter-bar select,
+	.filter-bar input[type='date'],
+	.filter-bar input[type='text'] {
+		padding: 6px 10px;
+		border: 1px solid #cbd5e1;
+		border-radius: 5px;
+		font-size: 0.875rem;
+		font-family: inherit;
+		background: white;
+		width: auto;
+	}
+
+	.filter-bar .search-input {
+		min-width: 180px;
+	}
+
 	.page-header {
 		margin-bottom: 24px;
 	}

@@ -16,7 +16,7 @@ async function getCompanyOrRedirect() {
 	return company;
 }
 
-export const load: PageServerLoad = async ({ parent }) => {
+export const load: PageServerLoad = async ({ parent, url }) => {
 	const { user } = await parent();
 	if (!canManageFinances(user.role)) {
 		redirect(302, '/dashboard');
@@ -42,12 +42,49 @@ export const load: PageServerLoad = async ({ parent }) => {
 		})
 	);
 
-	// Recent ledger entries (last 20), newest first, across all containers for this company
+	// Filters
+	const filterContainerId = url.searchParams.get('containerId') ?? '';
+	const filterEntryType = url.searchParams.get('entryType') ?? '';
+	const filterDateFrom = url.searchParams.get('dateFrom') ?? '';
+	const filterDateTo = url.searchParams.get('dateTo') ?? '';
+	const filterSearch = url.searchParams.get('search') ?? '';
+
 	const containerIds = containers.map((c) => c.id);
+	const validEntryTypes = [
+		'invoice_payment',
+		'standalone_income',
+		'expense_payment',
+		'generic_credit',
+		'generic_debit',
+		'transfer_out',
+		'transfer_in'
+	] as const;
+	type EntryType = (typeof validEntryTypes)[number];
+
+	const entriesWhere: Record<string, unknown> = {
+		containerId: filterContainerId && containerIds.includes(filterContainerId)
+			? filterContainerId
+			: { in: containerIds },
+		...(filterEntryType && validEntryTypes.includes(filterEntryType as EntryType)
+			? { entryType: filterEntryType as EntryType }
+			: {}),
+		...(filterDateFrom || filterDateTo
+			? {
+					entryDate: {
+						...(filterDateFrom ? { gte: new Date(filterDateFrom) } : {}),
+						...(filterDateTo ? { lte: new Date(filterDateTo) } : {})
+					}
+				}
+			: {}),
+		...(filterSearch
+			? { description: { contains: filterSearch, mode: 'insensitive' } }
+			: {})
+	};
+
 	const recentEntries = await db.ledgerEntry.findMany({
-		where: { containerId: { in: containerIds } },
+		where: entriesWhere,
 		orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }],
-		take: 20,
+		take: 50,
 		include: {
 			container: { select: { id: true, name: true, containerType: true } },
 			createdByUser: { select: { firstName: true, lastName: true } }
@@ -57,7 +94,15 @@ export const load: PageServerLoad = async ({ parent }) => {
 	return {
 		bank: bankContainer,
 		cashbox: cashboxContainer,
+		containers,
 		recentEntries,
+		filters: {
+			containerId: filterContainerId,
+			entryType: filterEntryType,
+			dateFrom: filterDateFrom,
+			dateTo: filterDateTo,
+			search: filterSearch
+		},
 		canManage: canManageFinances(user.role),
 		isAdmin: user.role === 'admin'
 	};

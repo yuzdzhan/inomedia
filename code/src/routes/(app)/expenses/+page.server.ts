@@ -107,7 +107,7 @@ function generateOccurrenceDates(
 
 // ─── Load ──────────────────────────────────────────────────────────────────
 
-export const load: PageServerLoad = async ({ parent }) => {
+export const load: PageServerLoad = async ({ parent, url }) => {
 	const { user } = await parent();
 
 	if (!canViewExpenses(user.role)) {
@@ -159,14 +159,35 @@ export const load: PageServerLoad = async ({ parent }) => {
 	// Load money containers (ensure they exist)
 	const moneyContainers = await ensureMoneyContainers(company.id);
 
-	// Load expenses based on role
-	const expenseWhere =
+	// Read filter params
+	const filterStatus = url.searchParams.get('status') ?? '';
+	const filterCategoryId = url.searchParams.get('categoryId') ?? '';
+	const filterClientId = url.searchParams.get('clientId') ?? '';
+	const filterProjectId = url.searchParams.get('projectId') ?? '';
+	const filterDateFrom = url.searchParams.get('dateFrom') ?? '';
+	const filterDateTo = url.searchParams.get('dateTo') ?? '';
+
+	// Load expenses based on role + filters
+	const baseWhere =
 		user.role === 'manager'
-			? {
-					companyId: company.id,
-					projectId: { in: accessibleProjects }
-				}
+			? { companyId: company.id, projectId: { in: accessibleProjects } }
 			: { companyId: company.id };
+
+	const expenseWhere = {
+		...baseWhere,
+		...(filterStatus === 'paid' || filterStatus === 'unpaid' ? { status: filterStatus as 'paid' | 'unpaid' } : {}),
+		...(filterCategoryId ? { categoryId: filterCategoryId } : {}),
+		...(filterClientId ? { clientId: filterClientId } : {}),
+		...(filterProjectId ? { projectId: filterProjectId } : {}),
+		...(filterDateFrom || filterDateTo
+			? {
+					incurredDate: {
+						...(filterDateFrom ? { gte: new Date(filterDateFrom) } : {}),
+						...(filterDateTo ? { lte: new Date(filterDateTo) } : {})
+					}
+				}
+			: {})
+	};
 
 	const expenses = await db.expense.findMany({
 		where: expenseWhere,
@@ -195,6 +216,16 @@ export const load: PageServerLoad = async ({ parent }) => {
 			})
 		: [];
 
+	// Load all projects (for filter dropdown) visible to this user
+	const allVisibleProjects = await db.project.findMany({
+		where:
+			user.role === 'manager'
+				? { id: { in: accessibleProjects } }
+				: { client: { companyId: company.id } },
+		orderBy: [{ client: { legalName: 'asc' } }, { name: 'asc' }],
+		select: { id: true, name: true, clientId: true, client: { select: { legalName: true } } }
+	});
+
 	return {
 		categories,
 		activeCategories,
@@ -203,6 +234,15 @@ export const load: PageServerLoad = async ({ parent }) => {
 		recurringTemplates,
 		accessibleProjects,
 		moneyContainers,
+		allVisibleProjects,
+		filters: {
+			status: filterStatus,
+			categoryId: filterCategoryId,
+			clientId: filterClientId,
+			projectId: filterProjectId,
+			dateFrom: filterDateFrom,
+			dateTo: filterDateTo
+		},
 		permissions: {
 			canManageFinance: canManageFinanceExpenses(user.role),
 			canManageProject: canManageProjectExpenses(user.role),
