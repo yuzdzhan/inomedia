@@ -4,7 +4,7 @@ import type { TaskBillingType, TaskPriority, TaskStatus } from '@prisma/client';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
 import { ensureCompanyDefaults } from '$lib/server/company-defaults';
-import { canCreateOrManageProjects } from '$lib/server/project-policy';
+import { canCreateOrManageProjects, canViewProjectFinancials } from '$lib/server/project-policy';
 import {
 	canAccessProjectTasks,
 	canManageProjectTasks,
@@ -41,13 +41,18 @@ const taskSchema = z.object({
 		z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Използвайте валидна дата.')
 	]),
 	billingType: z.enum(['hourly', 'flat_fee', 'non_billable']),
-	flatFeeAmount: moneyField
+	flatFeeAmount: moneyField,
+	assigneeUserIds: z.array(z.string().trim()).default([])
 });
 
 const CLOSED_TASK_STATUSES: TaskStatus[] = ['done', 'cancelled'];
 
 function parseCheckbox(formData: FormData, key: string) {
 	return formData.get(key) === 'on';
+}
+
+function dedupeIds(ids: string[]) {
+	return [...new Set(ids.filter(Boolean))];
 }
 
 function buildTaskListInput(formData: FormData) {
@@ -69,7 +74,8 @@ function buildTaskInput(formData: FormData) {
 		priority: String(formData.get('priority') ?? 'medium'),
 		deadlineDate: String(formData.get('deadlineDate') ?? ''),
 		billingType: String(formData.get('billingType') ?? 'hourly'),
-		flatFeeAmount: String(formData.get('flatFeeAmount') ?? '')
+		flatFeeAmount: String(formData.get('flatFeeAmount') ?? ''),
+		assigneeUserIds: formData.getAll('assigneeUserIds').map(String)
 	};
 }
 
@@ -92,7 +98,8 @@ function normalizeTaskPayload(data: z.infer<typeof taskSchema>) {
 		priority: data.priority,
 		deadlineDate: parseOptionalDateInput(data.deadlineDate),
 		billingType: data.billingType,
-		flatFeeAmountCents: parseOptionalMoneyToCents(data.flatFeeAmount)
+		flatFeeAmountCents: parseOptionalMoneyToCents(data.flatFeeAmount),
+		assigneeUserIds: dedupeIds(data.assigneeUserIds)
 	};
 }
 
@@ -165,6 +172,20 @@ async function getScopedProject(companyId: string, projectId: string) {
 									firstName: true,
 									lastName: true
 								}
+							},
+							assignees: {
+								orderBy: [{ user: { lastName: 'asc' } }, { user: { firstName: 'asc' } }],
+								include: {
+									user: {
+										select: {
+											id: true,
+											firstName: true,
+											lastName: true,
+											role: true,
+											status: true
+										}
+									}
+								}
 							}
 						},
 						orderBy: [{ deadlineDate: 'asc' }, { updatedAt: 'desc' }, { title: 'asc' }]
@@ -208,6 +229,24 @@ function validateTaskBilling(input: ReturnType<typeof normalizeTaskPayload>, isI
 	return null;
 }
 
+function validateTaskAssignees(
+	input: ReturnType<typeof normalizeTaskPayload>,
+	project: Awaited<ReturnType<typeof getScopedProject>>
+) {
+	if (!project) {
+		return null;
+	}
+
+	const allowedUserIds = new Set(project.members.map((member) => member.userId));
+	const invalidAssigneeIds = input.assigneeUserIds.filter((userId) => !allowedUserIds.has(userId));
+
+	if (invalidAssigneeIds.length > 0) {
+		return { field: 'assigneeUserIds', message: 'Задачите могат да се възлагат само на участници в проекта.' };
+	}
+
+	return null;
+}
+
 function isClosedTask(status: TaskStatus) {
 	return CLOSED_TASK_STATUSES.includes(status);
 }
@@ -226,19 +265,27 @@ export const load: PageServerLoad = async ({ params, parent, url }) => {
 	}
 
 	const showClosed = url.searchParams.get('showClosed') === '1';
+	const isEmployeeView = user.role === 'employee';
+
+	if (isEmployeeView && !project.members.some((member) => member.userId === user.id)) {
+		redirect(302, '/projects');
+	}
 
 	return {
 		company: { currency: company.currency },
 		project: {
 			...project,
 			taskLists: project.taskLists.map((taskList) => {
+				const relevantTasks = isEmployeeView
+					? taskList.tasks.filter((task) => task.assignees.some((assignee) => assignee.userId === user.id))
+					: taskList.tasks;
 				const visibleTasks = showClosed
-					? taskList.tasks
-					: taskList.tasks.filter((task) => !isClosedTask(task.status));
+					? relevantTasks
+					: relevantTasks.filter((task) => !isClosedTask(task.status));
 
 				return {
 					...taskList,
-					hiddenClosedTaskCount: showClosed ? 0 : taskList._count.tasks - visibleTasks.length,
+					hiddenClosedTaskCount: showClosed ? 0 : relevantTasks.length - visibleTasks.length,
 					tasks: visibleTasks.map((task) => ({
 						...task,
 						deadlineDateInput: formatDateForInput(task.deadlineDate)
@@ -249,7 +296,9 @@ export const load: PageServerLoad = async ({ params, parent, url }) => {
 		showClosed,
 		permissions: {
 			canManageTasks: canManageProjectTasks(user.role),
-			canManageProjects: canCreateOrManageProjects(user.role)
+			canManageProjects: canCreateOrManageProjects(user.role),
+			canViewFinancials: canViewProjectFinancials(user.role),
+			isEmployeeView
 		}
 	};
 };
@@ -364,6 +413,15 @@ export const actions: Actions = {
 			});
 		}
 
+		const assigneeValidation = validateTaskAssignees(data, project);
+		if (assigneeValidation) {
+			return fail(422, {
+				createTaskErrors: { [assigneeValidation.field]: [assigneeValidation.message] },
+				createTaskValues: raw,
+				createTaskTaskListId: raw.taskListId
+			});
+		}
+
 		const task = await db.task.create({
 			data: {
 				taskListId: taskList.id,
@@ -374,7 +432,15 @@ export const actions: Actions = {
 				deadlineDate: data.deadlineDate,
 				billingType: data.billingType,
 				flatFeeAmountCents: data.billingType === 'flat_fee' ? data.flatFeeAmountCents : null,
-				createdByUserId: locals.user.id
+				createdByUserId: locals.user.id,
+				assignees:
+					data.assigneeUserIds.length > 0
+						? {
+								createMany: {
+									data: data.assigneeUserIds.map((userId) => ({ userId }))
+								}
+							}
+						: undefined
 			}
 		});
 
@@ -390,7 +456,8 @@ export const actions: Actions = {
 				priority: task.priority,
 				deadlineDate: formatDateForInput(task.deadlineDate),
 				billingType: task.billingType,
-				flatFeeAmountCents: task.flatFeeAmountCents
+				flatFeeAmountCents: task.flatFeeAmountCents,
+				assigneeUserIds: data.assigneeUserIds
 			},
 			ipAddress: getClientAddress(),
 			userAgent: request.headers.get('user-agent') ?? undefined
@@ -421,6 +488,11 @@ export const actions: Actions = {
 		const task = await db.task.findUnique({
 			where: { id: taskId },
 			include: {
+				assignees: {
+					select: {
+						userId: true
+					}
+				},
 				taskList: {
 					include: {
 						project: {
@@ -468,18 +540,44 @@ export const actions: Actions = {
 			});
 		}
 
-		const updatedTask = await db.task.update({
-			where: { id: task.id },
-			data: {
-				taskListId: targetTaskList.id,
-				title: data.title,
-				description: data.description,
-				status: data.status,
-				priority: data.priority,
-				deadlineDate: data.deadlineDate,
-				billingType: data.billingType,
-				flatFeeAmountCents: data.billingType === 'flat_fee' ? data.flatFeeAmountCents : null
+		const assigneeValidation = validateTaskAssignees(data, project);
+		if (assigneeValidation) {
+			return fail(422, {
+				taskFormErrors: { [assigneeValidation.field]: [assigneeValidation.message] },
+				taskFormValues: raw,
+				taskFormTaskId: taskId
+			});
+		}
+
+		const updatedTask = await db.$transaction(async (tx) => {
+			const nextTask = await tx.task.update({
+				where: { id: task.id },
+				data: {
+					taskListId: targetTaskList.id,
+					title: data.title,
+					description: data.description,
+					status: data.status,
+					priority: data.priority,
+					deadlineDate: data.deadlineDate,
+					billingType: data.billingType,
+					flatFeeAmountCents: data.billingType === 'flat_fee' ? data.flatFeeAmountCents : null
+				}
+			});
+
+			await tx.taskAssignment.deleteMany({
+				where: { taskId: task.id }
+			});
+
+			if (data.assigneeUserIds.length > 0) {
+				await tx.taskAssignment.createMany({
+					data: data.assigneeUserIds.map((userId) => ({
+						taskId: task.id,
+						userId
+					}))
+				});
 			}
+
+			return nextTask;
 		});
 
 		await logAuditEvent({
@@ -495,7 +593,8 @@ export const actions: Actions = {
 				priority: task.priority,
 				deadlineDate: formatDateForInput(task.deadlineDate),
 				billingType: task.billingType,
-				flatFeeAmountCents: task.flatFeeAmountCents
+				flatFeeAmountCents: task.flatFeeAmountCents,
+				assigneeUserIds: task.assignees.map((assignee) => assignee.userId)
 			},
 			newValueJson: {
 				taskListId: updatedTask.taskListId,
@@ -505,7 +604,8 @@ export const actions: Actions = {
 				priority: updatedTask.priority,
 				deadlineDate: formatDateForInput(updatedTask.deadlineDate),
 				billingType: updatedTask.billingType,
-				flatFeeAmountCents: updatedTask.flatFeeAmountCents
+				flatFeeAmountCents: updatedTask.flatFeeAmountCents,
+				assigneeUserIds: data.assigneeUserIds
 			},
 			ipAddress: getClientAddress(),
 			userAgent: request.headers.get('user-agent') ?? undefined

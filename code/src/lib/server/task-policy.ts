@@ -1,6 +1,7 @@
 import {
 	canAccessProjectRegistry,
 	canCreateOrManageProjects,
+	canViewProjectFinancials,
 	formatMoneyFromCents,
 	normalizeOptionalProjectDescription,
 	parseOptionalMoneyToCents
@@ -35,6 +36,8 @@ export function canAccessProjectTasks(role: string) {
 export function canManageProjectTasks(role: string) {
 	return canCreateOrManageProjects(role);
 }
+
+export { canViewProjectFinancials };
 
 export function normalizeTaskListName(value: string) {
 	return value.replace(/\s+/g, ' ').trim();

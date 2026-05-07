@@ -1,7 +1,8 @@
 import type { ProjectStatus, UserRole } from '@prisma/client';
 
-export const PROJECT_REGISTRY_ROLES = ['admin', 'manager', 'accountant'] as const;
+export const PROJECT_REGISTRY_ROLES = ['admin', 'manager', 'employee', 'accountant'] as const;
 export const PROJECT_MANAGER_ROLES = ['admin', 'manager'] as const;
+export const PROJECT_FINANCIAL_ROLES = ['admin', 'manager', 'accountant'] as const;
 
 export function canAccessProjectRegistry(role: string) {
 	return PROJECT_REGISTRY_ROLES.includes(role as (typeof PROJECT_REGISTRY_ROLES)[number]);
@@ -9,6 +10,10 @@ export function canAccessProjectRegistry(role: string) {
 
 export function canCreateOrManageProjects(role: string) {
 	return PROJECT_MANAGER_ROLES.includes(role as (typeof PROJECT_MANAGER_ROLES)[number]);
+}
+
+export function canViewProjectFinancials(role: string) {
+	return PROJECT_FINANCIAL_ROLES.includes(role as (typeof PROJECT_FINANCIAL_ROLES)[number]);
 }
 
 export function canBePrimaryProjectManager(role: UserRole) {

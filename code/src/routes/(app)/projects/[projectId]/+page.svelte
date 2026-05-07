@@ -1,4 +1,4 @@
-<script lang="ts">
+﻿<script lang="ts">
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -80,6 +80,19 @@
 		return (form as any)?.createTaskValues?.[field] ?? fallback;
 	}
 
+	function createTaskFieldValues(field: string, fallback: string[] = []) {
+		const value = (form as any)?.createTaskValues?.[field];
+		if (Array.isArray(value)) {
+			return value.map(String);
+		}
+
+		if (typeof value === 'string' && value.length > 0) {
+			return [value];
+		}
+
+		return fallback;
+	}
+
 	function defaultBillingType(): TaskBillingTypeValue {
 		return data.project.client.isInternal ? 'non_billable' : 'hourly';
 	}
@@ -94,6 +107,23 @@
 
 	function taskFieldValue(field: string, fallback: string | null = '') {
 		return selectedTaskId ? ((form as any)?.taskFormValues?.[field] ?? fallback ?? '') : (fallback ?? '');
+	}
+
+	function taskFieldValues(field: string, fallback: string[] = []) {
+		if (!selectedTaskId) {
+			return fallback;
+		}
+
+		const value = (form as any)?.taskFormValues?.[field];
+		if (Array.isArray(value)) {
+			return value.map(String);
+		}
+
+		if (typeof value === 'string' && value.length > 0) {
+			return [value];
+		}
+
+		return fallback;
 	}
 
 	function taskBillingTypeValue(task: { billingType: string }) {
@@ -148,6 +178,20 @@
 		return String(createTaskFieldValue('taskListId', createTaskModal?.taskListId ?? data.project.taskLists[0]?.id ?? ''));
 	}
 
+	function assigneeNames(
+		task: {
+			assignees: Array<{
+				user: { firstName: string; lastName: string };
+			}>;
+		}
+	) {
+		if (task.assignees.length === 0) {
+			return 'Няма назначени';
+		}
+
+		return task.assignees.map((assignee) => userLabel(assignee.user)).join(', ');
+	}
+
 	const filteredTaskLists = $derived.by(() => {
 		const query = searchQuery.trim().toLowerCase();
 		if (!query) {
@@ -163,7 +207,8 @@
 						task.title.toLowerCase().includes(query) ||
 						(task.description ?? '').toLowerCase().includes(query) ||
 						taskStatusLabels[task.status].toLowerCase().includes(query) ||
-						priorityLabels[task.priority].toLowerCase().includes(query)
+						priorityLabels[task.priority].toLowerCase().includes(query) ||
+						assigneeNames(task).toLowerCase().includes(query)
 					);
 				});
 
@@ -365,6 +410,7 @@
 											Създадена от {userLabel(task.createdByUser)}
 										{/if}
 									</span>
+									<span class="task-secondary">Назначени: {assigneeNames(task)}</span>
 								</span>
 								<span class="task-cell">
 									<span class="status-pill" data-status={task.status}>{taskStatusLabels[task.status]}</span>
@@ -375,7 +421,7 @@
 								</span>
 								<span class="task-cell billing-cell">
 									{billingTypeLabels[task.billingType]}
-									{#if task.billingType === 'flat_fee'}
+									{#if data.permissions.canViewFinancials && task.billingType === 'flat_fee'}
 										<small>{formatMoneyFromCents(task.flatFeeAmountCents)} {data.company.currency}</small>
 									{/if}
 								</span>
@@ -405,27 +451,22 @@
 				</div>
 				<button type="button" class="icon-btn" onclick={closeCreateTaskListModal}>✕</button>
 			</div>
-
 			<form method="POST" action="?/createTaskList" class="modal-form">
 				<input type="hidden" name="projectId" value={data.project.id} />
-
 				<div class="field">
 					<label for="task-list-name">Име</label>
 					<input id="task-list-name" name="name" type="text" value={taskListFieldValue('name')} required />
 					{#if taskListFieldError('name')}<span class="error-text">{taskListFieldError('name')}</span>{/if}
 				</div>
-
 				<div class="field">
 					<label for="task-list-description">Описание</label>
 					<textarea id="task-list-description" name="description" rows="4">{taskListFieldValue('description')}</textarea>
 					{#if taskListFieldError('description')}<span class="error-text">{taskListFieldError('description')}</span>{/if}
 				</div>
-
 				<label class="checkbox">
 					<input type="checkbox" name="isArchived" checked={Boolean(taskListFieldValue('isArchived', false))} />
 					<span>Създай като архивен списък</span>
 				</label>
-
 				<div class="modal-actions">
 					<button type="button" class="btn-secondary" onclick={closeCreateTaskListModal}>Отказ</button>
 					<button type="submit" class="btn-primary">Създай списък</button>
@@ -522,6 +563,25 @@
 				</div>
 
 				<div class="field">
+					<label>Назначени изпълнители</label>
+					<div class="assignee-grid">
+						{#each data.project.members as member}
+							<label class="member-option">
+								<input
+									type="checkbox"
+									name="assigneeUserIds"
+									value={member.userId}
+									checked={createTaskFieldValues('assigneeUserIds').includes(member.userId)}
+								/>
+								<span>{userLabel(member.user)}</span>
+								<small>{member.user.role}{member.user.status === 'inactive' ? ' неактивен' : ''}</small>
+							</label>
+						{/each}
+					</div>
+					{#if createTaskFieldError('assigneeUserIds')}<span class="error-text">{createTaskFieldError('assigneeUserIds')}</span>{/if}
+				</div>
+
+				<div class="field">
 					<label for="create-description">Описание</label>
 					<textarea id="create-description" name="description" rows="5">{createTaskFieldValue('description')}</textarea>
 					{#if createTaskFieldError('description')}<span class="error-text">{createTaskFieldError('description')}</span>{/if}
@@ -545,9 +605,8 @@
 					<div class="eyebrow">Детайли по задача</div>
 					<h2 id="task-details-modal-title">{task.title}</h2>
 				</div>
-				<button type="button" class="icon-btn" onclick={closeTaskModal}>✕</button>
+				<button type="button" class="icon-btn" onclick={closeTaskModal}>x</button>
 			</div>
-
 			<div class="detail-strip">
 				<span class="status-pill" data-status={task.status}>{taskStatusLabels[task.status]}</span>
 				<span class="priority-pill" data-priority={task.priority}>{priorityLabels[task.priority]}</span>
@@ -555,100 +614,142 @@
 				<span class="meta-chip">{formatDeadline(task.deadlineDateInput)}</span>
 				<span class="meta-chip">Създадена от {userLabel(task.createdByUser)}</span>
 			</div>
-
-			<form method="POST" action="?/updateTask" class="modal-form">
-				<input type="hidden" name="taskId" value={task.id} />
-				<input type="hidden" name="projectId" value={data.project.id} />
-
-				<div class="grid two">
-					<div class="field">
+			{#if data.permissions.canManageTasks}
+				<form method="POST" action="?/updateTask" class="modal-form">
+					<input type="hidden" name="taskId" value={task.id} />
+					<input type="hidden" name="projectId" value={data.project.id} />
+					<div class="grid two">
+						<div class="field">
 						<label for={'task-title-' + task.id}>Заглавие</label>
-						<input id={'task-title-' + task.id} name="title" type="text" value={taskFieldValue('title', task.title)} required />
-						{#if taskFieldError('title')}<span class="error-text">{taskFieldError('title')}</span>{/if}
+							<input id={'task-title-' + task.id} name="title" type="text" value={taskFieldValue('title', task.title)} required />
+							{#if taskFieldError('title')}<span class="error-text">{taskFieldError('title')}</span>{/if}
+						</div>
+						<div class="field">
+							<label for={'task-taskListId-' + task.id}>Списък</label>
+							<select id={'task-taskListId-' + task.id} name="taskListId">
+								{#each data.project.taskLists as option}
+									<option value={option.id} selected={taskFieldValue('taskListId', task.taskListId) === option.id}>
+										{option.name}{option.isArchived ? ' · архивен' : ''}
+									</option>
+								{/each}
+							</select>
+							{#if taskFieldError('taskListId')}<span class="error-text">{taskFieldError('taskListId')}</span>{/if}
+						</div>
+						<div class="field">
+							<label for={'task-status-' + task.id}>Статус</label>
+							<select id={'task-status-' + task.id} name="status">
+								{#each Object.entries(taskStatusLabels) as [value, label]}
+									<option value={value} selected={taskFieldValue('status', task.status) === value}>{label}</option>
+								{/each}
+							</select>
+							{#if taskFieldError('status')}<span class="error-text">{taskFieldError('status')}</span>{/if}
+						</div>
+						<div class="field">
+							<label for={'task-priority-' + task.id}>Приоритет</label>
+							<select id={'task-priority-' + task.id} name="priority">
+								{#each Object.entries(priorityLabels) as [value, label]}
+									<option value={value} selected={taskFieldValue('priority', task.priority) === value}>{label}</option>
+								{/each}
+							</select>
+							{#if taskFieldError('priority')}<span class="error-text">{taskFieldError('priority')}</span>{/if}
+						</div>
+						<div class="field">
+							<label for={'task-deadlineDate-' + task.id}>Срок</label>
+							<input id={'task-deadlineDate-' + task.id} name="deadlineDate" type="date" value={taskFieldValue('deadlineDate', task.deadlineDateInput)} />
+							{#if taskFieldError('deadlineDate')}<span class="error-text">{taskFieldError('deadlineDate')}</span>{/if}
+						</div>
+						<div class="field">
+							<label for={'task-billingType-' + task.id}>Тип таксуване</label>
+							<select
+								id={'task-billingType-' + task.id}
+								name="billingType"
+								bind:value={selectedTaskBillingType}
+								disabled={data.project.client.isInternal}
+							>
+								{#each Object.entries(billingTypeLabels) as [value, label]}
+									<option value={value}>{label}</option>
+								{/each}
+							</select>
+							{#if data.project.client.isInternal}
+								<input type="hidden" name="billingType" value="non_billable" />
+							{/if}
+							{#if taskFieldError('billingType')}<span class="error-text">{taskFieldError('billingType')}</span>{/if}
+						</div>
+						<div class="field" hidden={selectedTaskBillingType !== 'flat_fee'}>
+							<label for={'task-flatFeeAmount-' + task.id}>Фиксирана цена ({data.company.currency})</label>
+							<input
+								id={'task-flatFeeAmount-' + task.id}
+								name="flatFeeAmount"
+								type="text"
+								inputmode="decimal"
+								value={taskFieldValue('flatFeeAmount', formatMoneyFromCents(task.flatFeeAmountCents))}
+							/>
+							{#if taskFieldError('flatFeeAmount')}<span class="error-text">{taskFieldError('flatFeeAmount')}</span>{/if}
+						</div>
 					</div>
-
 					<div class="field">
-						<label for={'task-taskListId-' + task.id}>Списък</label>
-						<select id={'task-taskListId-' + task.id} name="taskListId">
-							{#each data.project.taskLists as option}
-								<option value={option.id} selected={taskFieldValue('taskListId', task.taskListId) === option.id}>
-									{option.name}{option.isArchived ? ' · архивен' : ''}
-								</option>
+						<label>Assignees</label>
+						<div class="assignee-grid">
+							{#each data.project.members as member}
+								<label class="member-option">
+									<input
+										type="checkbox"
+										name="assigneeUserIds"
+										value={member.userId}
+										checked={taskFieldValues('assigneeUserIds', task.assignees.map((assignee) => assignee.userId)).includes(member.userId)}
+									/>
+									<span>{userLabel(member.user)}</span>
+									<small>{member.user.role}{member.user.status === 'inactive' ? ' - inactive' : ''}</small>
+								</label>
 							{/each}
-						</select>
-						{#if taskFieldError('taskListId')}<span class="error-text">{taskFieldError('taskListId')}</span>{/if}
+						</div>
+						{#if taskFieldError('assigneeUserIds')}<span class="error-text">{taskFieldError('assigneeUserIds')}</span>{/if}
 					</div>
-
 					<div class="field">
-						<label for={'task-status-' + task.id}>Статус</label>
-						<select id={'task-status-' + task.id} name="status">
-							{#each Object.entries(taskStatusLabels) as [value, label]}
-								<option value={value} selected={taskFieldValue('status', task.status) === value}>{label}</option>
-							{/each}
-						</select>
-						{#if taskFieldError('status')}<span class="error-text">{taskFieldError('status')}</span>{/if}
+						<label for={'task-description-' + task.id}>Описание</label>
+						<textarea id={'task-description-' + task.id} name="description" rows="6">{taskFieldValue('description', task.description)}</textarea>
+						{#if taskFieldError('description')}<span class="error-text">{taskFieldError('description')}</span>{/if}
 					</div>
-
+					<div class="modal-actions">
+						<button type="button" class="btn-secondary" onclick={closeTaskModal}>Close</button>
+						<button type="submit" class="btn-primary">
+							{['done', 'cancelled'].includes(task.status) ? 'Запази и отвори отново при нужда' : 'Запази задачата'}
+						</button>
+					</div>
+				</form>
+			{:else}
+				<div class="modal-form">
+					<div class="detail-grid">
+						<div class="field">
+							<label>Списък</label>
+							<div class="detail-value">{data.project.taskLists.find((entry) => entry.id === task.taskListId)?.name ?? 'None'}</div>
+						</div>
+						<div class="field">
+							<label>Краен срок</label>
+							<div class="detail-value">{formatDeadline(task.deadlineDateInput)}</div>
+						</div>
+						<div class="field">
+							<label>Приоритет</label>
+							<div class="detail-value">{priorityLabels[task.priority]}</div>
+						</div>
+						<div class="field">
+							<label>Билинг тип</label>
+							<div class="detail-value">{billingTypeLabels[task.billingType]}</div>
+						</div>
+					</div>
 					<div class="field">
-						<label for={'task-priority-' + task.id}>Приоритет</label>
-						<select id={'task-priority-' + task.id} name="priority">
-							{#each Object.entries(priorityLabels) as [value, label]}
-								<option value={value} selected={taskFieldValue('priority', task.priority) === value}>{label}</option>
-							{/each}
-						</select>
-						{#if taskFieldError('priority')}<span class="error-text">{taskFieldError('priority')}</span>{/if}
+						<label>Назначени</label>
+						<div class="detail-value">{assigneeNames(task)}</div>
 					</div>
-
 					<div class="field">
-						<label for={'task-deadlineDate-' + task.id}>Срок</label>
-						<input id={'task-deadlineDate-' + task.id} name="deadlineDate" type="date" value={taskFieldValue('deadlineDate', task.deadlineDateInput)} />
-						{#if taskFieldError('deadlineDate')}<span class="error-text">{taskFieldError('deadlineDate')}</span>{/if}
+						<label>Описание</label>
+						<div class="detail-value detail-value-block">{task.description || 'Няма описание'}</div>
 					</div>
-
-					<div class="field">
-						<label for={'task-billingType-' + task.id}>Тип таксуване</label>
-						<select
-							id={'task-billingType-' + task.id}
-							name="billingType"
-							bind:value={selectedTaskBillingType}
-							disabled={data.project.client.isInternal}
-						>
-							{#each Object.entries(billingTypeLabels) as [value, label]}
-								<option value={value}>{label}</option>
-							{/each}
-						</select>
-						{#if data.project.client.isInternal}
-							<input type="hidden" name="billingType" value="non_billable" />
-						{/if}
-						{#if taskFieldError('billingType')}<span class="error-text">{taskFieldError('billingType')}</span>{/if}
-					</div>
-
-					<div class="field" hidden={selectedTaskBillingType !== 'flat_fee'}>
-						<label for={'task-flatFeeAmount-' + task.id}>Фиксирана цена ({data.company.currency})</label>
-						<input
-							id={'task-flatFeeAmount-' + task.id}
-							name="flatFeeAmount"
-							type="text"
-							inputmode="decimal"
-							value={taskFieldValue('flatFeeAmount', formatMoneyFromCents(task.flatFeeAmountCents))}
-						/>
-						{#if taskFieldError('flatFeeAmount')}<span class="error-text">{taskFieldError('flatFeeAmount')}</span>{/if}
+					<div class="modal-actions">
+						<button type="button" class="btn-secondary" onclick={closeTaskModal}>Затвори</button>
 					</div>
 				</div>
-
-				<div class="field">
-					<label for={'task-description-' + task.id}>Описание</label>
-					<textarea id={'task-description-' + task.id} name="description" rows="6">{taskFieldValue('description', task.description)}</textarea>
-					{#if taskFieldError('description')}<span class="error-text">{taskFieldError('description')}</span>{/if}
-				</div>
-
-				<div class="modal-actions">
-					<button type="button" class="btn-secondary" onclick={closeTaskModal}>Затвори</button>
-					<button type="submit" class="btn-primary">
-						{['done', 'cancelled'].includes(task.status) ? 'Запази и при нужда отвори отново' : 'Запази задачата'}
-					</button>
-				</div>
-			</form>
+			{/if}
 		</div>
 	</div>
 {/if}
@@ -962,6 +1063,32 @@
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 
+	.assignee-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 12px;
+	}
+
+	.member-option {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: 12px;
+		border: 1px solid #dbe4f0;
+		border-radius: 14px;
+		background: #fff;
+	}
+
+	.member-option input {
+		width: auto;
+		margin-bottom: 4px;
+	}
+
+	.member-option small {
+		color: #64748b;
+		font-size: 0.82rem;
+	}
+
 	.btn-primary,
 	.btn-secondary,
 	.btn-ghost {
@@ -1162,6 +1289,25 @@
 		padding: 0 24px 18px;
 	}
 
+	.detail-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 16px;
+	}
+
+	.detail-value {
+		padding: 12px 14px;
+		border: 1px solid #e2e8f0;
+		border-radius: 14px;
+		background: #f8fafc;
+		color: #334155;
+	}
+
+	.detail-value-block {
+		white-space: pre-wrap;
+		min-height: 5rem;
+	}
+
 	@media (max-width: 980px) {
 		.hero,
 		.workspace-toolbar,
@@ -1209,6 +1355,11 @@
 			grid-template-columns: 1fr;
 		}
 
+		.assignee-grid,
+		.detail-grid {
+			grid-template-columns: 1fr;
+		}
+
 		.modal-actions {
 			flex-direction: column-reverse;
 		}
@@ -1220,3 +1371,5 @@
 		}
 	}
 </style>
+
+

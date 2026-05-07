@@ -24,6 +24,14 @@
 		return `${user.firstName} ${user.lastName}`;
 	}
 
+	function isManagerRole(user: { role: string }) {
+		return ['admin', 'manager'].includes(user.role);
+	}
+
+	function projectMemberIds(members: Array<{ userId: string }>) {
+		return members.map((member) => member.userId);
+	}
+
 	function createFieldError(field: string) {
 		return (form as any)?.createProjectErrors?.[field]?.[0];
 	}
@@ -146,7 +154,7 @@
 					<label for="create-primaryManagerUserId">Основен мениджър</label>
 					<select id="create-primaryManagerUserId" name="primaryManagerUserId" required>
 						<option value="">Изберете мениджър</option>
-						{#each data.users.filter((user) => ['admin', 'manager'].includes(user.role)) as user}
+						{#each data.users.filter(isManagerRole) as user}
 							<option value={user.id} selected={createFieldValue('primaryManagerUserId') === user.id}>
 								{userLabel(user)} · {roleLabels[user.role]}
 							</option>
@@ -244,14 +252,16 @@
 								<span class="meta-label">Екип</span>
 								<span class="meta-value">{project.members.length}</span>
 							</div>
-							<div>
-								<span class="meta-label">Бюджет</span>
-								<span class="meta-value">{formatMoney(project.budgetAmountCents)}</span>
-							</div>
-							<div>
-								<span class="meta-label">Абонамент</span>
-								<span class="meta-value">{formatMoney(project.retainerAmountCents)}</span>
-							</div>
+							{#if data.permissions.canViewFinancials}
+								<div>
+									<span class="meta-label">Бюджет</span>
+									<span class="meta-value">{formatMoney(project.budgetAmountCents)}</span>
+								</div>
+								<div>
+									<span class="meta-label">Абонамент</span>
+									<span class="meta-value">{formatMoney(project.retainerAmountCents)}</span>
+								</div>
+							{/if}
 						</div>
 					</div>
 
@@ -296,7 +306,7 @@
 								name="primaryManagerUserId"
 								disabled={!data.permissions.canManageProjects}
 							>
-								{#each data.users.filter((user) => ['admin', 'manager'].includes(user.role)) as user}
+								{#each data.users.filter(isManagerRole) as user}
 									<option
 										value={user.id}
 										selected={projectFieldValue(project.id, 'primaryManagerUserId', project.primaryManagerUserId) === user.id}
@@ -316,30 +326,32 @@
 							</select>
 							{#if projectFieldError(project.id, 'status')}<span class="error-text">{projectFieldError(project.id, 'status')}</span>{/if}
 						</div>
-						<div class="field">
-							<label for={'budgetAmount-' + project.id}>Бюджет ({data.company.currency})</label>
-							<input
-								id={'budgetAmount-' + project.id}
-								name="budgetAmount"
-								type="text"
-								inputmode="decimal"
-								value={projectFieldValue(project.id, 'budgetAmount', formatMoneyFromCents(project.budgetAmountCents))}
-								disabled={!data.permissions.canManageProjects}
-							/>
-							{#if projectFieldError(project.id, 'budgetAmount')}<span class="error-text">{projectFieldError(project.id, 'budgetAmount')}</span>{/if}
-						</div>
-						<div class="field">
-							<label for={'retainerAmount-' + project.id}>Абонамент ({data.company.currency})</label>
-							<input
-								id={'retainerAmount-' + project.id}
-								name="retainerAmount"
-								type="text"
-								inputmode="decimal"
-								value={projectFieldValue(project.id, 'retainerAmount', formatMoneyFromCents(project.retainerAmountCents))}
-								disabled={!data.permissions.canManageProjects}
-							/>
-							{#if projectFieldError(project.id, 'retainerAmount')}<span class="error-text">{projectFieldError(project.id, 'retainerAmount')}</span>{/if}
-						</div>
+						{#if data.permissions.canViewFinancials}
+							<div class="field">
+								<label for={'budgetAmount-' + project.id}>Бюджет ({data.company.currency})</label>
+								<input
+									id={'budgetAmount-' + project.id}
+									name="budgetAmount"
+									type="text"
+									inputmode="decimal"
+									value={projectFieldValue(project.id, 'budgetAmount', formatMoneyFromCents(project.budgetAmountCents))}
+									disabled={!data.permissions.canManageProjects}
+								/>
+								{#if projectFieldError(project.id, 'budgetAmount')}<span class="error-text">{projectFieldError(project.id, 'budgetAmount')}</span>{/if}
+							</div>
+							<div class="field">
+								<label for={'retainerAmount-' + project.id}>Абонамент ({data.company.currency})</label>
+								<input
+									id={'retainerAmount-' + project.id}
+									name="retainerAmount"
+									type="text"
+									inputmode="decimal"
+									value={projectFieldValue(project.id, 'retainerAmount', formatMoneyFromCents(project.retainerAmountCents))}
+									disabled={!data.permissions.canManageProjects}
+								/>
+								{#if projectFieldError(project.id, 'retainerAmount')}<span class="error-text">{projectFieldError(project.id, 'retainerAmount')}</span>{/if}
+							</div>
+						{/if}
 					</div>
 
 					<div class="field">
@@ -375,7 +387,7 @@
 										type="checkbox"
 										name="memberUserIds"
 										value={user.id}
-										checked={projectFieldValues(project.id, project.members.map((member) => member.userId)).includes(user.id)}
+										checked={projectFieldValues(project.id, projectMemberIds(project.members)).includes(user.id)}
 										disabled={!data.permissions.canManageProjects}
 									/>
 									<span>{userLabel(user)}</span>

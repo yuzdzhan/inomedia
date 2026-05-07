@@ -7,6 +7,7 @@ import {
 	canAccessProjectRegistry,
 	canBePrimaryProjectManager,
 	canCreateOrManageProjects,
+	canViewProjectFinancials,
 	normalizeOptionalProjectDescription,
 	normalizeProjectName,
 	parseOptionalMoneyToCents
@@ -122,33 +123,47 @@ export const load: PageServerLoad = async ({ parent }) => {
 	}
 
 	const company = await getCompanyOrRedirect();
+	const canManageProjects = canCreateOrManageProjects(user.role);
 
-	const [clients, users, projects] = await db.$transaction([
-		db.client.findMany({
-			where: { companyId: company.id },
-			orderBy: [{ status: 'asc' }, { legalName: 'asc' }],
-			select: {
-				id: true,
-				legalName: true,
-				status: true,
-				isInternal: true
-			}
-		}),
-		db.user.findMany({
-			orderBy: [{ status: 'asc' }, { lastName: 'asc' }, { firstName: 'asc' }],
-			select: {
-				id: true,
-				firstName: true,
-				lastName: true,
-				role: true,
-				status: true
-			}
-		}),
+	const [clients, users, projects] = await Promise.all([
+		canManageProjects
+			? db.client.findMany({
+					where: { companyId: company.id },
+					orderBy: [{ status: 'asc' }, { legalName: 'asc' }],
+					select: {
+						id: true,
+						legalName: true,
+						status: true,
+						isInternal: true
+					}
+				})
+			: [],
+		canManageProjects
+			? db.user.findMany({
+					orderBy: [{ status: 'asc' }, { lastName: 'asc' }, { firstName: 'asc' }],
+					select: {
+						id: true,
+						firstName: true,
+						lastName: true,
+						role: true,
+						status: true
+					}
+				})
+			: [],
 		db.project.findMany({
 			where: {
 				client: {
 					companyId: company.id
-				}
+				},
+				...(user.role === 'employee'
+					? {
+							members: {
+								some: {
+									userId: user.id
+								}
+							}
+						}
+					: {})
 			},
 			orderBy: [{ status: 'asc' }, { name: 'asc' }],
 			include: {
@@ -197,7 +212,8 @@ export const load: PageServerLoad = async ({ parent }) => {
 		users,
 		projects,
 		permissions: {
-			canManageProjects: canCreateOrManageProjects(user.role)
+			canManageProjects,
+			canViewFinancials: canViewProjectFinancials(user.role)
 		}
 	};
 };

@@ -1,4 +1,4 @@
-<script lang="ts">
+﻿<script lang="ts">
 	import { page } from '$app/state';
 	import type { Snippet } from 'svelte';
 	import type { LayoutData } from './$types';
@@ -19,7 +19,7 @@
 
 		<ul class="nav-list">
 			<li><a href="/dashboard" aria-current={page.url.pathname === '/dashboard' ? 'page' : undefined}>Начало</a></li>
-			{#if ['admin', 'manager', 'accountant'].includes(data.user.role)}
+			{#if ['admin', 'manager', 'employee', 'accountant'].includes(data.user.role)}
 				<li><a href="/clients" aria-current={page.url.pathname === '/clients' ? 'page' : undefined}>Клиенти</a></li>
 				<li><a href="/projects" aria-current={page.url.pathname === '/projects' ? 'page' : undefined}>Проекти</a></li>
 			{/if}
@@ -128,3 +128,4 @@
 		overflow-y: auto;
 	}
 </style>
+
