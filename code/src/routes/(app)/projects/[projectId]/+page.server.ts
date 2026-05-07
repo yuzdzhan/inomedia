@@ -4,6 +4,7 @@ import type { TaskBillingType, TaskPriority, TaskStatus } from '@prisma/client';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
 import { ensureCompanyDefaults } from '$lib/server/company-defaults';
+import { prepareAttachments } from '$lib/server/task-attachments';
 import { canCreateOrManageProjects, canViewProjectFinancials } from '$lib/server/project-policy';
 import {
 	canAccessProjectTasks,
@@ -51,7 +52,7 @@ const taskSchema = z.object({
 const taskCommentSchema = z.object({
 	projectId: z.string().trim().min(1),
 	taskId: z.string().trim().min(1),
-	body: z.string().trim().min(1, 'Ð’ÑŠÐ²ÐµÐ´ÐµÑ‚Ðµ ÐºÐ¾Ð¼ÐµÐ½Ñ‚Ð°Ñ€.').max(4000, 'ÐšÐ¾Ð¼ÐµÐ½Ñ‚Ð°Ñ€ÑŠÑ‚ Ðµ Ñ‚Ð²ÑŠÑ€Ð´Ðµ Ð´ÑŠÐ»ÑŠÐ³.')
+	body: z.string().trim().min(1, 'Въведете коментар.').max(4000, 'Коментарът е твърде дълъг.')
 });
 
 const CLOSED_TASK_STATUSES: TaskStatus[] = ['done', 'cancelled'];
@@ -94,6 +95,10 @@ function buildTaskCommentInput(formData: FormData) {
 		taskId: String(formData.get('taskId') ?? ''),
 		body: String(formData.get('body') ?? '')
 	};
+}
+
+function buildAttachmentErrorMap(errors: string[]) {
+	return errors.length > 0 ? { attachments: errors } : null;
 }
 
 function normalizeTaskListPayload(data: z.infer<typeof taskListSchema>) {
@@ -223,6 +228,30 @@ async function getScopedProject(companyId: string, projectId: string) {
 										}
 									},
 									deletedByUser: {
+										select: {
+											id: true,
+											firstName: true,
+											lastName: true
+										}
+									},
+									attachments: {
+										orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+										include: {
+											uploadedByUser: {
+												select: {
+													id: true,
+													firstName: true,
+													lastName: true
+												}
+											}
+										}
+									}
+								}
+							},
+							attachments: {
+								orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+								include: {
+									uploadedByUser: {
 										select: {
 											id: true,
 											firstName: true,
@@ -441,6 +470,8 @@ export const actions: Actions = {
 			return fail(403, { createTaskError: 'Нямате права за тази операция.' });
 		}
 
+		const user = locals.user;
+
 		const company = await getCompanyOrRedirect();
 		const formData = await request.formData();
 		const raw = buildTaskInput(formData);
@@ -491,30 +522,58 @@ export const actions: Actions = {
 			});
 		}
 
-		const task = await db.task.create({
-			data: {
-				taskListId: taskList.id,
-				title: data.title,
-				description: data.description,
-				status: data.status,
-				priority: data.priority,
-				deadlineDate: data.deadlineDate,
-				billingType: data.billingType,
-				flatFeeAmountCents: data.billingType === 'flat_fee' ? data.flatFeeAmountCents : null,
-				createdByUserId: locals.user.id,
-				assignees:
-					data.assigneeUserIds.length > 0
-						? {
-								createMany: {
-									data: data.assigneeUserIds.map((userId) => ({ userId }))
+		const preparedAttachments = await prepareAttachments(formData.getAll('attachments'));
+		const attachmentErrors = buildAttachmentErrorMap(preparedAttachments.errors);
+		if (attachmentErrors) {
+			return fail(422, {
+				createTaskErrors: attachmentErrors,
+				createTaskValues: raw,
+				createTaskTaskListId: raw.taskListId
+			});
+		}
+
+		const task = await db.$transaction(async (tx) => {
+			const createdTask = await tx.task.create({
+				data: {
+					taskListId: taskList.id,
+					title: data.title,
+					description: data.description,
+					status: data.status,
+					priority: data.priority,
+					deadlineDate: data.deadlineDate,
+					billingType: data.billingType,
+					flatFeeAmountCents: data.billingType === 'flat_fee' ? data.flatFeeAmountCents : null,
+					createdByUserId: user.id,
+					assignees:
+						data.assigneeUserIds.length > 0
+							? {
+									createMany: {
+										data: data.assigneeUserIds.map((userId) => ({ userId }))
+									}
 								}
-							}
-						: undefined
+							: undefined
+				}
+			});
+
+			if (preparedAttachments.attachments.length > 0) {
+				await tx.taskAttachment.createMany({
+					data: preparedAttachments.attachments.map((attachment) => ({
+						ownerCompanyId: company.id,
+						taskId: createdTask.id,
+						uploadedByUserId: user.id,
+						originalFilename: attachment.originalFilename,
+						contentType: attachment.contentType,
+						sizeBytes: attachment.sizeBytes,
+						blob: attachment.blob as Uint8Array<ArrayBuffer>
+					}))
+				});
 			}
+
+			return createdTask;
 		});
 
 		await logAuditEvent({
-			actorUserId: locals.user.id,
+			actorUserId: user.id,
 			eventType: 'task_created',
 			entityType: 'task',
 			entityId: task.id,
@@ -526,7 +585,8 @@ export const actions: Actions = {
 				deadlineDate: formatDateForInput(task.deadlineDate),
 				billingType: task.billingType,
 				flatFeeAmountCents: task.flatFeeAmountCents,
-				assigneeUserIds: data.assigneeUserIds
+				assigneeUserIds: data.assigneeUserIds,
+				attachmentCount: preparedAttachments.attachments.length
 			},
 			ipAddress: getClientAddress(),
 			userAgent: request.headers.get('user-agent') ?? undefined
@@ -540,6 +600,8 @@ export const actions: Actions = {
 			return fail(403, { taskFormError: 'Нямате права за тази операция.' });
 		}
 
+		const user = locals.user;
+
 		const company = await getCompanyOrRedirect();
 		const formData = await request.formData();
 		const taskId = String(formData.get('taskId') ?? '');
@@ -549,6 +611,16 @@ export const actions: Actions = {
 		if (!parsed.success) {
 			return fail(422, {
 				taskFormErrors: parsed.error.flatten().fieldErrors,
+				taskFormValues: raw,
+				taskFormTaskId: taskId
+			});
+		}
+
+		const preparedAttachments = await prepareAttachments(formData.getAll('attachments'));
+		const attachmentErrors = buildAttachmentErrorMap(preparedAttachments.errors);
+		if (attachmentErrors) {
+			return fail(422, {
+				taskFormErrors: attachmentErrors,
 				taskFormValues: raw,
 				taskFormTaskId: taskId
 			});
@@ -646,11 +718,25 @@ export const actions: Actions = {
 				});
 			}
 
+			if (preparedAttachments.attachments.length > 0) {
+				await tx.taskAttachment.createMany({
+					data: preparedAttachments.attachments.map((attachment) => ({
+						ownerCompanyId: company.id,
+						taskId: task.id,
+						uploadedByUserId: user.id,
+						originalFilename: attachment.originalFilename,
+						contentType: attachment.contentType,
+						sizeBytes: attachment.sizeBytes,
+						blob: attachment.blob as Uint8Array<ArrayBuffer>
+					}))
+				});
+			}
+
 			return nextTask;
 		});
 
 		await logAuditEvent({
-			actorUserId: locals.user.id,
+			actorUserId: user.id,
 			eventType: 'task_updated',
 			entityType: 'task',
 			entityId: task.id,
@@ -674,7 +760,8 @@ export const actions: Actions = {
 				deadlineDate: formatDateForInput(updatedTask.deadlineDate),
 				billingType: updatedTask.billingType,
 				flatFeeAmountCents: updatedTask.flatFeeAmountCents,
-				assigneeUserIds: data.assigneeUserIds
+				assigneeUserIds: data.assigneeUserIds,
+				addedAttachmentCount: preparedAttachments.attachments.length
 			},
 			ipAddress: getClientAddress(),
 			userAgent: request.headers.get('user-agent') ?? undefined
@@ -685,8 +772,10 @@ export const actions: Actions = {
 
 	createComment: async ({ request, locals, getClientAddress }) => {
 		if (!locals.user || !canCreateTaskComments(locals.user.role)) {
-			return fail(403, { commentFormError: 'ÐÑÐ¼Ð°Ñ‚Ðµ Ð¿Ñ€Ð°Ð²Ð° Ð·Ð° Ñ‚Ð°Ð·Ð¸ Ð¾Ð¿ÐµÑ€Ð°Ñ†Ð¸Ñ.' });
+			return fail(403, { commentFormError: 'Нямате права за тази операция.' });
 		}
+
+		const user = locals.user;
 
 		const company = await getCompanyOrRedirect();
 		const formData = await request.formData();
@@ -701,38 +790,68 @@ export const actions: Actions = {
 			});
 		}
 
+		const preparedAttachments = await prepareAttachments(formData.getAll('attachments'));
+		const attachmentErrors = buildAttachmentErrorMap(preparedAttachments.errors);
+		if (attachmentErrors) {
+			return fail(422, {
+				commentFormErrors: attachmentErrors,
+				commentFormValues: raw,
+				commentFormTaskId: raw.taskId
+			});
+		}
+
 		const data = normalizeTaskCommentPayload(parsed.data);
 		const project = await getScopedProject(company.id, data.projectId);
 
 		if (!project) {
-			return fail(404, { commentFormError: 'ÐŸÑ€Ð¾ÐµÐºÑ‚ÑŠÑ‚ Ð½Ðµ Ðµ Ð½Ð°Ð¼ÐµÑ€ÐµÐ½.', commentFormTaskId: raw.taskId });
+			return fail(404, { commentFormError: 'Проектът не е намерен.', commentFormTaskId: raw.taskId });
 		}
 
 		const task = findProjectTask(project, data.taskId);
 		if (!task) {
-			return fail(404, { commentFormError: 'Ð—Ð°Ð´Ð°Ñ‡Ð°Ñ‚Ð° Ð½Ðµ Ðµ Ð½Ð°Ð¼ÐµÑ€ÐµÐ½Ð°.', commentFormTaskId: raw.taskId });
+			return fail(404, { commentFormError: 'Задачата не е намерена.', commentFormTaskId: raw.taskId });
 		}
 
 		if (!canUserReachTask(locals.user, task)) {
-			return fail(403, { commentFormError: 'ÐÑÐ¼Ð°Ñ‚Ðµ Ð´Ð¾ÑÑ‚ÑŠÐ¿ Ð´Ð¾ Ñ‚Ð°Ð·Ð¸ Ð·Ð°Ð´Ð°Ñ‡Ð°.', commentFormTaskId: task.id });
+			return fail(403, { commentFormError: 'Нямате достъп до тази задача.', commentFormTaskId: task.id });
 		}
 
-		const comment = await db.taskComment.create({
-			data: {
-				taskId: task.id,
-				authorUserId: locals.user.id,
-				body: data.body
+		const comment = await db.$transaction(async (tx) => {
+			const createdComment = await tx.taskComment.create({
+				data: {
+					taskId: task.id,
+					authorUserId: user.id,
+					body: data.body
+				}
+			});
+
+			if (preparedAttachments.attachments.length > 0) {
+				await tx.taskAttachment.createMany({
+					data: preparedAttachments.attachments.map((attachment) => ({
+						ownerCompanyId: company.id,
+						taskId: task.id,
+						taskCommentId: createdComment.id,
+						uploadedByUserId: user.id,
+						originalFilename: attachment.originalFilename,
+						contentType: attachment.contentType,
+						sizeBytes: attachment.sizeBytes,
+						blob: attachment.blob as Uint8Array<ArrayBuffer>
+					}))
+				});
 			}
+
+			return createdComment;
 		});
 
 		await logAuditEvent({
-			actorUserId: locals.user.id,
+			actorUserId: user.id,
 			eventType: 'task_comment_created',
 			entityType: 'task_comment',
 			entityId: comment.id,
 			newValueJson: {
 				taskId: comment.taskId,
-				body: comment.body
+				body: comment.body,
+				attachmentCount: preparedAttachments.attachments.length
 			},
 			ipAddress: getClientAddress(),
 			userAgent: request.headers.get('user-agent') ?? undefined
@@ -743,8 +862,10 @@ export const actions: Actions = {
 
 	updateComment: async ({ request, locals, getClientAddress }) => {
 		if (!locals.user || !canCreateTaskComments(locals.user.role)) {
-			return fail(403, { commentFormError: 'ÐÑÐ¼Ð°Ñ‚Ðµ Ð¿Ñ€Ð°Ð²Ð° Ð·Ð° Ñ‚Ð°Ð·Ð¸ Ð¾Ð¿ÐµÑ€Ð°Ñ†Ð¸Ñ.' });
+			return fail(403, { commentFormError: 'Нямате права за тази операция.' });
 		}
+
+		const user = locals.user;
 
 		const company = await getCompanyOrRedirect();
 		const formData = await request.formData();
@@ -755,6 +876,17 @@ export const actions: Actions = {
 		if (!parsed.success) {
 			return fail(422, {
 				commentFormErrors: parsed.error.flatten().fieldErrors,
+				commentFormValues: raw,
+				commentFormTaskId: raw.taskId,
+				commentFormCommentId: commentId
+			});
+		}
+
+		const preparedAttachments = await prepareAttachments(formData.getAll('attachments'));
+		const attachmentErrors = buildAttachmentErrorMap(preparedAttachments.errors);
+		if (attachmentErrors) {
+			return fail(422, {
+				commentFormErrors: attachmentErrors,
 				commentFormValues: raw,
 				commentFormTaskId: raw.taskId,
 				commentFormCommentId: commentId
@@ -791,28 +923,28 @@ export const actions: Actions = {
 		});
 
 		if (!comment || comment.task.taskList.project.client.companyId !== company.id || comment.taskId !== data.taskId) {
-			return fail(404, { commentFormError: 'ÐšÐ¾Ð¼ÐµÐ½Ñ‚Ð°Ñ€ÑŠÑ‚ Ð½Ðµ Ðµ Ð½Ð°Ð¼ÐµÑ€ÐµÐ½.', commentFormTaskId: raw.taskId });
+			return fail(404, { commentFormError: 'Коментарът не е намерен.', commentFormTaskId: raw.taskId });
 		}
 
 		if (!canUserReachTask(locals.user, comment.task)) {
-			return fail(403, { commentFormError: 'ÐÑÐ¼Ð°Ñ‚Ðµ Ð´Ð¾ÑÑ‚ÑŠÐ¿ Ð´Ð¾ Ñ‚Ð°Ð·Ð¸ Ð·Ð°Ð´Ð°Ñ‡Ð°.', commentFormTaskId: comment.taskId });
+			return fail(403, { commentFormError: 'Нямате достъп до тази задача.', commentFormTaskId: comment.taskId });
 		}
 
 		if (comment.authorUserId !== locals.user.id) {
 			return fail(403, {
-				commentFormError: 'ÐœÐ¾Ð¶ÐµÑ‚Ðµ Ð´Ð° Ñ€ÐµÐ´Ð°ÐºÑ‚Ð¸Ñ€Ð°Ñ‚Ðµ ÑÐ°Ð¼Ð¾ ÑÐ¾Ð±ÑÑ‚Ð²ÐµÐ½Ð¸Ñ‚Ðµ ÑÐ¸ ÐºÐ¾Ð¼ÐµÐ½Ñ‚Ð°Ñ€Ð¸.',
+				commentFormError: 'Можете да редактирате само собствените си коментари.',
 				commentFormTaskId: comment.taskId
 			});
 		}
 
 		if (comment.isDeleted) {
 			return fail(409, {
-				commentFormError: 'Ð˜Ð·Ñ‚Ñ€Ð¸Ñ‚Ð¸Ñ‚Ðµ ÐºÐ¾Ð¼ÐµÐ½Ñ‚Ð°Ñ€Ð¸ Ð½Ðµ Ð¼Ð¾Ð³Ð°Ñ‚ Ð´Ð° ÑÐµ Ñ€ÐµÐ´Ð°ÐºÑ‚Ð¸Ñ€Ð°Ñ‚.',
+				commentFormError: 'Изтритите коментари не могат да се редактират.',
 				commentFormTaskId: comment.taskId
 			});
 		}
 
-		if (comment.body === data.body) {
+		if (comment.body === data.body && preparedAttachments.attachments.length === 0) {
 			return {
 				commentFormSuccess: true,
 				commentFormTaskId: comment.taskId,
@@ -821,16 +953,35 @@ export const actions: Actions = {
 		}
 
 		const editedAt = new Date();
-		const updatedComment = await db.taskComment.update({
-			where: { id: comment.id },
-			data: {
-				body: data.body,
-				editedAt
+		const updatedComment = await db.$transaction(async (tx) => {
+			const nextComment = await tx.taskComment.update({
+				where: { id: comment.id },
+				data: {
+					body: data.body,
+					editedAt
+				}
+			});
+
+			if (preparedAttachments.attachments.length > 0) {
+				await tx.taskAttachment.createMany({
+					data: preparedAttachments.attachments.map((attachment) => ({
+						ownerCompanyId: company.id,
+						taskId: comment.taskId,
+						taskCommentId: comment.id,
+						uploadedByUserId: user.id,
+						originalFilename: attachment.originalFilename,
+						contentType: attachment.contentType,
+						sizeBytes: attachment.sizeBytes,
+						blob: attachment.blob as Uint8Array<ArrayBuffer>
+					}))
+				});
 			}
+
+			return nextComment;
 		});
 
 		await logAuditEvent({
-			actorUserId: locals.user.id,
+			actorUserId: user.id,
 			eventType: 'task_comment_updated',
 			entityType: 'task_comment',
 			entityId: comment.id,
@@ -842,7 +993,8 @@ export const actions: Actions = {
 			newValueJson: {
 				taskId: updatedComment.taskId,
 				body: updatedComment.body,
-				editedAt: updatedComment.editedAt?.toISOString() ?? null
+				editedAt: updatedComment.editedAt?.toISOString() ?? null,
+				addedAttachmentCount: preparedAttachments.attachments.length
 			},
 			ipAddress: getClientAddress(),
 			userAgent: request.headers.get('user-agent') ?? undefined
@@ -857,7 +1009,7 @@ export const actions: Actions = {
 
 	deleteComment: async ({ request, locals, getClientAddress }) => {
 		if (!locals.user || !canSoftDeleteTaskComments(locals.user.role)) {
-			return fail(403, { commentDeleteError: 'ÐÑÐ¼Ð°Ñ‚Ðµ Ð¿Ñ€Ð°Ð²Ð° Ð·Ð° Ñ‚Ð°Ð·Ð¸ Ð¾Ð¿ÐµÑ€Ð°Ñ†Ð¸Ñ.' });
+			return fail(403, { commentDeleteError: 'Нямате права за тази операция.' });
 		}
 
 		const company = await getCompanyOrRedirect();
@@ -868,17 +1020,17 @@ export const actions: Actions = {
 		const project = await getScopedProject(company.id, projectId);
 
 		if (!project) {
-			return fail(404, { commentDeleteError: 'ÐŸÑ€Ð¾ÐµÐºÑ‚ÑŠÑ‚ Ð½Ðµ Ðµ Ð½Ð°Ð¼ÐµÑ€ÐµÐ½.', commentDeleteTaskId: taskId });
+			return fail(404, { commentDeleteError: 'Проектът не е намерен.', commentDeleteTaskId: taskId });
 		}
 
 		const task = findProjectTask(project, taskId);
 		if (!task) {
-			return fail(404, { commentDeleteError: 'Ð—Ð°Ð´Ð°Ñ‡Ð°Ñ‚Ð° Ð½Ðµ Ðµ Ð½Ð°Ð¼ÐµÑ€ÐµÐ½Ð°.', commentDeleteTaskId: taskId });
+			return fail(404, { commentDeleteError: 'Задачата не е намерена.', commentDeleteTaskId: taskId });
 		}
 
 		const comment = task.comments.find((entry) => entry.id === commentId);
 		if (!comment) {
-			return fail(404, { commentDeleteError: 'ÐšÐ¾Ð¼ÐµÐ½Ñ‚Ð°Ñ€ÑŠÑ‚ Ð½Ðµ Ðµ Ð½Ð°Ð¼ÐµÑ€ÐµÐ½.', commentDeleteTaskId: taskId });
+			return fail(404, { commentDeleteError: 'Коментарът не е намерен.', commentDeleteTaskId: taskId });
 		}
 
 		if (comment.isDeleted) {

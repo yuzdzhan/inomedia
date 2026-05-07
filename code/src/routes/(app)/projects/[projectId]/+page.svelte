@@ -31,6 +31,14 @@
 
 	type CreateTaskModalState = { taskListId: string } | null;
 	type TaskBillingTypeValue = 'hourly' | 'flat_fee' | 'non_billable';
+	type AttachmentView = {
+		id: string;
+		originalFilename: string;
+		contentType: string;
+		sizeBytes: number;
+		createdAt: string | Date;
+		uploadedByUser: { firstName: string; lastName: string };
+	};
 
 	let searchQuery = $state('');
 	let createTaskListOpen = $state(false);
@@ -73,6 +81,28 @@
 			hour: '2-digit',
 			minute: '2-digit'
 		}).format(new Date(value));
+	}
+
+	function formatAttachmentSize(sizeBytes: number) {
+		if (sizeBytes < 1024) {
+			return `${sizeBytes} B`;
+		}
+
+		if (sizeBytes < 1024 * 1024) {
+			return `${(sizeBytes / 1024).toFixed(1)} KB`;
+		}
+
+		return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+	}
+
+	function attachmentUrl(attachmentId: string) {
+		return `/attachments/${attachmentId}`;
+	}
+
+	function isPreviewableAttachment(attachment: AttachmentView) {
+		return ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/bmp'].includes(
+			attachment.contentType
+		);
 	}
 
 	function taskListFieldError(field: string) {
@@ -143,6 +173,10 @@
 
 	function commentFieldValue(field: string, fallback = '') {
 		return (form as any)?.commentFormValues?.[field] ?? fallback;
+	}
+
+	function commentAttachmentFieldError() {
+		return commentFieldError('attachments');
 	}
 
 	function taskBillingTypeValue(task: { billingType: string }) {
@@ -544,7 +578,7 @@
 				<button type="button" class="icon-btn" onclick={closeCreateTaskModal}>✕</button>
 			</div>
 
-			<form method="POST" action="?/createTask" class="modal-form">
+			<form method="POST" action="?/createTask" enctype="multipart/form-data" class="modal-form">
 				<input type="hidden" name="projectId" value={data.project.id} />
 
 				<div class="grid two">
@@ -644,6 +678,13 @@
 					{#if createTaskFieldError('description')}<span class="error-text">{createTaskFieldError('description')}</span>{/if}
 				</div>
 
+				<div class="field">
+					<label for="create-attachments">Прикачени файлове</label>
+					<input id="create-attachments" name="attachments" type="file" multiple />
+					<small class="field-hint">Изображенията ще се показват с преглед, останалите файлове ще са за изтегляне.</small>
+					{#if createTaskFieldError('attachments')}<span class="error-text">{createTaskFieldError('attachments')}</span>{/if}
+				</div>
+
 				<div class="modal-actions">
 					<button type="button" class="btn-secondary" onclick={closeCreateTaskModal}>Отказ</button>
 					<button type="submit" class="btn-primary">Създай задача</button>
@@ -672,7 +713,7 @@
 				<span class="meta-chip">Създадена от {userLabel(task.createdByUser)}</span>
 			</div>
 			{#if data.permissions.canManageTasks}
-				<form method="POST" action="?/updateTask" class="modal-form">
+				<form method="POST" action="?/updateTask" enctype="multipart/form-data" class="modal-form">
 					<input type="hidden" name="taskId" value={task.id} />
 					<input type="hidden" name="projectId" value={data.project.id} />
 					<div class="grid two">
@@ -767,6 +808,32 @@
 						<textarea id={'task-description-' + task.id} name="description" rows="6">{taskFieldValue('description', task.description)}</textarea>
 						{#if taskFieldError('description')}<span class="error-text">{taskFieldError('description')}</span>{/if}
 					</div>
+					<div class="field">
+						<label>Прикачени файлове</label>
+						{#if task.attachments.length > 0}
+							<div class="attachment-grid">
+								{#each task.attachments as attachment}
+									<a class="attachment-card" href={attachmentUrl(attachment.id)} target="_blank" rel="noreferrer">
+										{#if isPreviewableAttachment(attachment)}
+											<img class="attachment-preview" src={attachmentUrl(attachment.id)} alt={attachment.originalFilename} />
+										{:else}
+											<div class="attachment-file-icon">Файл</div>
+										{/if}
+										<div class="attachment-copy">
+											<strong>{attachment.originalFilename}</strong>
+											<span>{formatAttachmentSize(attachment.sizeBytes)} · {formatDateTime(attachment.createdAt.toString())}</span>
+											<span>Качен от {userLabel(attachment.uploadedByUser)}</span>
+										</div>
+									</a>
+								{/each}
+							</div>
+						{:else}
+							<div class="detail-value">Все още няма файлове към задачата.</div>
+						{/if}
+						<input id={'task-attachments-' + task.id} name="attachments" type="file" multiple />
+						<small class="field-hint">Името на оригиналния файл се запазва и не може да се редактира.</small>
+						{#if taskFieldError('attachments')}<span class="error-text">{taskFieldError('attachments')}</span>{/if}
+					</div>
 					<div class="modal-actions">
 						<button type="button" class="btn-secondary" onclick={closeTaskModal}>Close</button>
 						<button type="submit" class="btn-primary">
@@ -802,6 +869,29 @@
 						<label>Описание</label>
 						<div class="detail-value detail-value-block">{task.description || 'Няма описание'}</div>
 					</div>
+					<div class="field">
+						<label>Файлове</label>
+						{#if task.attachments.length > 0}
+							<div class="attachment-grid">
+								{#each task.attachments as attachment}
+									<a class="attachment-card" href={attachmentUrl(attachment.id)} target="_blank" rel="noreferrer">
+										{#if isPreviewableAttachment(attachment)}
+											<img class="attachment-preview" src={attachmentUrl(attachment.id)} alt={attachment.originalFilename} />
+										{:else}
+											<div class="attachment-file-icon">Файл</div>
+										{/if}
+										<div class="attachment-copy">
+											<strong>{attachment.originalFilename}</strong>
+											<span>{formatAttachmentSize(attachment.sizeBytes)} · {formatDateTime(attachment.createdAt.toString())}</span>
+											<span>Качен от {userLabel(attachment.uploadedByUser)}</span>
+										</div>
+									</a>
+								{/each}
+							</div>
+						{:else}
+							<div class="detail-value">Няма прикачени файлове.</div>
+						{/if}
+					</div>
 					<div class="modal-actions">
 						<button type="button" class="btn-secondary" onclick={closeTaskModal}>Затвори</button>
 					</div>
@@ -830,7 +920,7 @@
 				{/if}
 
 				{#if data.permissions.canCreateComments}
-					<form method="POST" action="?/createComment" class="comment-composer">
+					<form method="POST" action="?/createComment" enctype="multipart/form-data" class="comment-composer">
 						<input type="hidden" name="projectId" value={data.project.id} />
 						<input type="hidden" name="taskId" value={task.id} />
 						<label for={'comment-create-' + task.id}>Нов коментар</label>
@@ -842,6 +932,11 @@
 						>{(form as any)?.commentFormCommentId ? '' : commentFieldValue('body')}</textarea>
 						{#if commentFieldError('body') && !(form as any)?.commentFormCommentId}
 							<span class="error-text">{commentFieldError('body')}</span>
+						{/if}
+						<input id={'comment-files-' + task.id} name="attachments" type="file" multiple />
+						<small class="field-hint">Можете да добавите снимки или други файлове към коментара.</small>
+						{#if commentAttachmentFieldError() && !(form as any)?.commentFormCommentId}
+							<span class="error-text">{commentAttachmentFieldError()}</span>
 						{/if}
 						<div class="comment-actions">
 							<button type="submit" class="btn-primary">Добави коментар</button>
@@ -884,13 +979,18 @@
 								</div>
 
 								{#if isEditingComment(comment.id)}
-									<form method="POST" action="?/updateComment" class="comment-editor">
+									<form method="POST" action="?/updateComment" enctype="multipart/form-data" class="comment-editor">
 										<input type="hidden" name="projectId" value={data.project.id} />
 										<input type="hidden" name="taskId" value={task.id} />
 										<input type="hidden" name="commentId" value={comment.id} />
 										<textarea name="body" rows="4">{commentFieldValue('body', comment.body)}</textarea>
 										{#if commentFieldError('body')}
 											<span class="error-text">{commentFieldError('body')}</span>
+										{/if}
+										<input name="attachments" type="file" multiple />
+										<small class="field-hint">Качените файлове остават към коментара като история.</small>
+										{#if commentAttachmentFieldError()}
+											<span class="error-text">{commentAttachmentFieldError()}</span>
 										{/if}
 										<div class="comment-actions">
 											<button type="button" class="btn-secondary" onclick={closeCommentEditor}>Отказ</button>
@@ -906,6 +1006,24 @@
 									</div>
 								{:else}
 									<div class="comment-body">{comment.body}</div>
+									{#if comment.attachments.length > 0}
+										<div class="attachment-grid comment-attachments">
+											{#each comment.attachments as attachment}
+												<a class="attachment-card" href={attachmentUrl(attachment.id)} target="_blank" rel="noreferrer">
+													{#if isPreviewableAttachment(attachment)}
+														<img class="attachment-preview" src={attachmentUrl(attachment.id)} alt={attachment.originalFilename} />
+													{:else}
+														<div class="attachment-file-icon">Файл</div>
+													{/if}
+													<div class="attachment-copy">
+														<strong>{attachment.originalFilename}</strong>
+														<span>{formatAttachmentSize(attachment.sizeBytes)} · {formatDateTime(attachment.createdAt.toString())}</span>
+														<span>Качен от {userLabel(attachment.uploadedByUser)}</span>
+													</div>
+												</a>
+											{/each}
+										</div>
+									{/if}
 								{/if}
 							</article>
 						{/each}
@@ -1553,6 +1671,70 @@
 		white-space: pre-wrap;
 		color: #1e293b;
 		line-height: 1.55;
+	}
+
+	.field-hint {
+		color: #64748b;
+		font-size: 0.9rem;
+	}
+
+	.attachment-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+		gap: 12px;
+	}
+
+	.attachment-card {
+		display: grid;
+		gap: 10px;
+		padding: 12px;
+		border: 1px solid rgba(15, 23, 42, 0.08);
+		border-radius: 16px;
+		background: rgba(255, 255, 255, 0.94);
+		color: inherit;
+		text-decoration: none;
+	}
+
+	.attachment-preview,
+	.attachment-file-icon {
+		width: 100%;
+		aspect-ratio: 4 / 3;
+		border-radius: 12px;
+	}
+
+	.attachment-preview {
+		object-fit: cover;
+		border: 1px solid rgba(15, 23, 42, 0.06);
+		background: #f8fafc;
+	}
+
+	.attachment-file-icon {
+		display: grid;
+		place-items: center;
+		background: linear-gradient(135deg, #f4ede1, #e5eef9);
+		color: #325a73;
+		font-weight: 800;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+	}
+
+	.attachment-copy {
+		display: grid;
+		gap: 4px;
+	}
+
+	.attachment-copy strong {
+		color: #18212f;
+		word-break: break-word;
+	}
+
+	.attachment-copy span {
+		color: #5a6473;
+		font-size: 0.9rem;
+	}
+
+	.comment-attachments {
+		margin-top: 14px;
 	}
 
 	.deleted-copy {
