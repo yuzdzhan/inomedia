@@ -120,6 +120,7 @@
 					<th>От</th>
 					<th>Статус</th>
 					<th>Редове</th>
+					<th>За преглед</th>
 					<th>Размер</th>
 					<th>Действия</th>
 				</tr>
@@ -136,6 +137,13 @@
 							</span>
 						</td>
 						<td>{stmt.rowCount}</td>
+						<td>
+							{#if stmt.needsReviewCount > 0}
+								<span class="review-badge">{stmt.needsReviewCount}</span>
+							{:else}
+								—
+							{/if}
+						</td>
 						<td>{formatSize(stmt.sizeBytes)}</td>
 						<td>
 							<a href="/bank-statements/{stmt.id}" class="btn-link">Преглед</a>
@@ -344,5 +352,15 @@
 		color: #94a3b8;
 		font-size: 0.9rem;
 		margin: 0;
+	}
+
+	.review-badge {
+		display: inline-block;
+		padding: 2px 8px;
+		border-radius: 999px;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		background: #fef3c7;
+		color: #92400e;
 	}
 </style>

@@ -1,6 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
+import { autoMatchStatementRows } from '$lib/server/statement-matching';
 import type { Actions, PageServerLoad } from './$types';
 
 function canManageStatements(role: string) {
@@ -62,7 +63,11 @@ export const load: PageServerLoad = async ({ parent }) => {
 			parsingVersion: true,
 			sizeBytes: true,
 			importedByUser: { select: { firstName: true, lastName: true } },
-			_count: { select: { rows: true } }
+			_count: { select: { rows: true } },
+			rows: {
+				where: { matchState: 'needs_review' },
+				select: { id: true }
+			}
 		}
 	});
 
@@ -75,7 +80,8 @@ export const load: PageServerLoad = async ({ parent }) => {
 			parsingVersion: s.parsingVersion,
 			sizeBytes: s.sizeBytes,
 			importedByName: `${s.importedByUser.firstName} ${s.importedByUser.lastName}`.trim(),
-			rowCount: s._count.rows
+			rowCount: s._count.rows,
+			needsReviewCount: s.rows.length
 		}))
 	};
 };
@@ -163,8 +169,19 @@ export const actions: Actions = {
 			userAgent: request.headers.get('user-agent') ?? undefined
 		});
 
+		// Run auto-matching after import (only if rows were parsed)
+		let matchResult = { matched: 0, unmatched: parsedRows.length };
+		if (parsedRows.length > 0 && parseStatus === 'ok') {
+			matchResult = await autoMatchStatementRows(statement.id, company.id, locals.user.id);
+		}
+
+		const matchSummary =
+			matchResult.matched > 0
+				? ` Автоматично съвпадени: ${matchResult.matched}.`
+				: '';
+
 		return {
-			importSuccess: `Извлечението е импортирано успешно. Разпознати редове: ${parsedRows.length}.`
+			importSuccess: `Извлечението е импортирано успешно. Разпознати редове: ${parsedRows.length}.${matchSummary}`
 		};
 	}
 };
