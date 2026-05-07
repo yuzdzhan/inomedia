@@ -32,6 +32,9 @@
 				<li><a href="/cashflow" aria-current={page.url.pathname === '/cashflow' ? 'page' : undefined}>Финанси</a></li>
 				<li><a href="/bank-statements" aria-current={page.url.pathname.startsWith('/bank-statements') ? 'page' : undefined}>Банк. извлечения</a></li>
 			{/if}
+			{#if ['admin', 'accountant', 'manager'].includes(data.user.role)}
+				<li><a href="/reports/billing" aria-current={page.url.pathname.startsWith('/reports/billing') ? 'page' : undefined}>Отчети: Фактуриране</a></li>
+			{/if}
 			{#if data.user.role === 'admin'}
 				<li><a href="/settings" aria-current={page.url.pathname === '/settings' ? 'page' : undefined}>Настройки</a></li>
 				<li><a href="/users" aria-current={page.url.pathname === '/users' ? 'page' : undefined}>Потребители</a></li>
