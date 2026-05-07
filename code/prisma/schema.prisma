@@ -32,6 +32,8 @@ model User {
   managedProjects Project[]    @relation("ProjectPrimaryManager")
   projectMemberships ProjectMember[]
   createdTasks    Task[]       @relation("TaskCreatedBy")
+  taskComments    TaskComment[] @relation("TaskCommentAuthor")
+  deletedTaskComments TaskComment[] @relation("TaskCommentDeletedBy")
   taskAssignments TaskAssignment[]
 
   @@map("user")
@@ -263,11 +265,33 @@ model Task {
   createdByUserId    String
   createdByUser      User            @relation("TaskCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   assignees          TaskAssignment[]
+  comments           TaskComment[]
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
 
   @@index([taskListId, status])
   @@map("task")
+}
+
+model TaskComment {
+  id              String   @id @default(cuid())
+  taskId          String
+  task            Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorUserId    String
+  author          User     @relation("TaskCommentAuthor", fields: [authorUserId], references: [id], onDelete: Restrict)
+  body            String
+  editedAt        DateTime?
+  isDeleted       Boolean  @default(false)
+  deletedAt       DateTime?
+  deletedByUserId String?
+  deletedByUser   User?    @relation("TaskCommentDeletedBy", fields: [deletedByUserId], references: [id], onDelete: Restrict)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([taskId, createdAt])
+  @@index([authorUserId])
+  @@index([deletedByUserId])
+  @@map("task_comment")
 }
 
 model TaskAssignment {

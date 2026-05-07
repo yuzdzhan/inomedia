@@ -7,8 +7,11 @@ import { ensureCompanyDefaults } from '$lib/server/company-defaults';
 import { canCreateOrManageProjects, canViewProjectFinancials } from '$lib/server/project-policy';
 import {
 	canAccessProjectTasks,
+	canCreateTaskComments,
 	canManageProjectTasks,
+	canSoftDeleteTaskComments,
 	formatDateForInput,
+	normalizeTaskCommentBody,
 	normalizeOptionalTaskDescription,
 	normalizeTaskListName,
 	normalizeTaskTitle,
@@ -45,6 +48,12 @@ const taskSchema = z.object({
 	assigneeUserIds: z.array(z.string().trim()).default([])
 });
 
+const taskCommentSchema = z.object({
+	projectId: z.string().trim().min(1),
+	taskId: z.string().trim().min(1),
+	body: z.string().trim().min(1, 'Ð’ÑŠÐ²ÐµÐ´ÐµÑ‚Ðµ ÐºÐ¾Ð¼ÐµÐ½Ñ‚Ð°Ñ€.').max(4000, 'ÐšÐ¾Ð¼ÐµÐ½Ñ‚Ð°Ñ€ÑŠÑ‚ Ðµ Ñ‚Ð²ÑŠÑ€Ð´Ðµ Ð´ÑŠÐ»ÑŠÐ³.')
+});
+
 const CLOSED_TASK_STATUSES: TaskStatus[] = ['done', 'cancelled'];
 
 function parseCheckbox(formData: FormData, key: string) {
@@ -79,6 +88,14 @@ function buildTaskInput(formData: FormData) {
 	};
 }
 
+function buildTaskCommentInput(formData: FormData) {
+	return {
+		projectId: String(formData.get('projectId') ?? ''),
+		taskId: String(formData.get('taskId') ?? ''),
+		body: String(formData.get('body') ?? '')
+	};
+}
+
 function normalizeTaskListPayload(data: z.infer<typeof taskListSchema>) {
 	return {
 		projectId: data.projectId,
@@ -100,6 +117,14 @@ function normalizeTaskPayload(data: z.infer<typeof taskSchema>) {
 		billingType: data.billingType,
 		flatFeeAmountCents: parseOptionalMoneyToCents(data.flatFeeAmount),
 		assigneeUserIds: dedupeIds(data.assigneeUserIds)
+	};
+}
+
+function normalizeTaskCommentPayload(data: z.infer<typeof taskCommentSchema>) {
+	return {
+		projectId: data.projectId,
+		taskId: data.taskId,
+		body: normalizeTaskCommentBody(data.body) ?? ''
 	};
 }
 
@@ -186,6 +211,25 @@ async function getScopedProject(companyId: string, projectId: string) {
 										}
 									}
 								}
+							},
+							comments: {
+								orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+								include: {
+									author: {
+										select: {
+											id: true,
+											firstName: true,
+											lastName: true
+										}
+									},
+									deletedByUser: {
+										select: {
+											id: true,
+											firstName: true,
+											lastName: true
+										}
+									}
+								}
 							}
 						},
 						orderBy: [{ deadlineDate: 'asc' }, { updatedAt: 'desc' }, { title: 'asc' }]
@@ -251,6 +295,28 @@ function isClosedTask(status: TaskStatus) {
 	return CLOSED_TASK_STATUSES.includes(status);
 }
 
+function findProjectTask(project: NonNullable<Awaited<ReturnType<typeof getScopedProject>>>, taskId: string) {
+	for (const taskList of project.taskLists) {
+		const task = taskList.tasks.find((entry) => entry.id === taskId);
+		if (task) {
+			return task;
+		}
+	}
+
+	return null;
+}
+
+function canUserReachTask(
+	user: { id: string; role: string },
+	task: { assignees: Array<{ userId: string }> }
+) {
+	if (user.role !== 'employee') {
+		return true;
+	}
+
+	return task.assignees.some((assignee) => assignee.userId === user.id);
+}
+
 export const load: PageServerLoad = async ({ params, parent, url }) => {
 	const { user } = await parent();
 	if (!canAccessProjectTasks(user.role)) {
@@ -295,8 +361,11 @@ export const load: PageServerLoad = async ({ params, parent, url }) => {
 		},
 		showClosed,
 		permissions: {
+			currentUserId: user.id,
 			canManageTasks: canManageProjectTasks(user.role),
 			canManageProjects: canCreateOrManageProjects(user.role),
+			canCreateComments: canCreateTaskComments(user.role),
+			canSoftDeleteComments: canSoftDeleteTaskComments(user.role),
 			canViewFinancials: canViewProjectFinancials(user.role),
 			isEmployeeView
 		}
@@ -612,6 +681,244 @@ export const actions: Actions = {
 		});
 
 		return { taskFormSuccess: true, taskFormTaskId: taskId };
+	},
+
+	createComment: async ({ request, locals, getClientAddress }) => {
+		if (!locals.user || !canCreateTaskComments(locals.user.role)) {
+			return fail(403, { commentFormError: 'ÐÑÐ¼Ð°Ñ‚Ðµ Ð¿Ñ€Ð°Ð²Ð° Ð·Ð° Ñ‚Ð°Ð·Ð¸ Ð¾Ð¿ÐµÑ€Ð°Ñ†Ð¸Ñ.' });
+		}
+
+		const company = await getCompanyOrRedirect();
+		const formData = await request.formData();
+		const raw = buildTaskCommentInput(formData);
+		const parsed = taskCommentSchema.safeParse(raw);
+
+		if (!parsed.success) {
+			return fail(422, {
+				commentFormErrors: parsed.error.flatten().fieldErrors,
+				commentFormValues: raw,
+				commentFormTaskId: raw.taskId
+			});
+		}
+
+		const data = normalizeTaskCommentPayload(parsed.data);
+		const project = await getScopedProject(company.id, data.projectId);
+
+		if (!project) {
+			return fail(404, { commentFormError: 'ÐŸÑ€Ð¾ÐµÐºÑ‚ÑŠÑ‚ Ð½Ðµ Ðµ Ð½Ð°Ð¼ÐµÑ€ÐµÐ½.', commentFormTaskId: raw.taskId });
+		}
+
+		const task = findProjectTask(project, data.taskId);
+		if (!task) {
+			return fail(404, { commentFormError: 'Ð—Ð°Ð´Ð°Ñ‡Ð°Ñ‚Ð° Ð½Ðµ Ðµ Ð½Ð°Ð¼ÐµÑ€ÐµÐ½Ð°.', commentFormTaskId: raw.taskId });
+		}
+
+		if (!canUserReachTask(locals.user, task)) {
+			return fail(403, { commentFormError: 'ÐÑÐ¼Ð°Ñ‚Ðµ Ð´Ð¾ÑÑ‚ÑŠÐ¿ Ð´Ð¾ Ñ‚Ð°Ð·Ð¸ Ð·Ð°Ð´Ð°Ñ‡Ð°.', commentFormTaskId: task.id });
+		}
+
+		const comment = await db.taskComment.create({
+			data: {
+				taskId: task.id,
+				authorUserId: locals.user.id,
+				body: data.body
+			}
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'task_comment_created',
+			entityType: 'task_comment',
+			entityId: comment.id,
+			newValueJson: {
+				taskId: comment.taskId,
+				body: comment.body
+			},
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return { commentFormSuccess: true, commentFormTaskId: task.id };
+	},
+
+	updateComment: async ({ request, locals, getClientAddress }) => {
+		if (!locals.user || !canCreateTaskComments(locals.user.role)) {
+			return fail(403, { commentFormError: 'ÐÑÐ¼Ð°Ñ‚Ðµ Ð¿Ñ€Ð°Ð²Ð° Ð·Ð° Ñ‚Ð°Ð·Ð¸ Ð¾Ð¿ÐµÑ€Ð°Ñ†Ð¸Ñ.' });
+		}
+
+		const company = await getCompanyOrRedirect();
+		const formData = await request.formData();
+		const commentId = String(formData.get('commentId') ?? '');
+		const raw = buildTaskCommentInput(formData);
+		const parsed = taskCommentSchema.safeParse(raw);
+
+		if (!parsed.success) {
+			return fail(422, {
+				commentFormErrors: parsed.error.flatten().fieldErrors,
+				commentFormValues: raw,
+				commentFormTaskId: raw.taskId,
+				commentFormCommentId: commentId
+			});
+		}
+
+		const data = normalizeTaskCommentPayload(parsed.data);
+		const comment = await db.taskComment.findUnique({
+			where: { id: commentId },
+			include: {
+				task: {
+					include: {
+						assignees: {
+							select: {
+								userId: true
+							}
+						},
+						taskList: {
+							include: {
+								project: {
+									include: {
+										client: {
+											select: {
+												companyId: true
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		});
+
+		if (!comment || comment.task.taskList.project.client.companyId !== company.id || comment.taskId !== data.taskId) {
+			return fail(404, { commentFormError: 'ÐšÐ¾Ð¼ÐµÐ½Ñ‚Ð°Ñ€ÑŠÑ‚ Ð½Ðµ Ðµ Ð½Ð°Ð¼ÐµÑ€ÐµÐ½.', commentFormTaskId: raw.taskId });
+		}
+
+		if (!canUserReachTask(locals.user, comment.task)) {
+			return fail(403, { commentFormError: 'ÐÑÐ¼Ð°Ñ‚Ðµ Ð´Ð¾ÑÑ‚ÑŠÐ¿ Ð´Ð¾ Ñ‚Ð°Ð·Ð¸ Ð·Ð°Ð´Ð°Ñ‡Ð°.', commentFormTaskId: comment.taskId });
+		}
+
+		if (comment.authorUserId !== locals.user.id) {
+			return fail(403, {
+				commentFormError: 'ÐœÐ¾Ð¶ÐµÑ‚Ðµ Ð´Ð° Ñ€ÐµÐ´Ð°ÐºÑ‚Ð¸Ñ€Ð°Ñ‚Ðµ ÑÐ°Ð¼Ð¾ ÑÐ¾Ð±ÑÑ‚Ð²ÐµÐ½Ð¸Ñ‚Ðµ ÑÐ¸ ÐºÐ¾Ð¼ÐµÐ½Ñ‚Ð°Ñ€Ð¸.',
+				commentFormTaskId: comment.taskId
+			});
+		}
+
+		if (comment.isDeleted) {
+			return fail(409, {
+				commentFormError: 'Ð˜Ð·Ñ‚Ñ€Ð¸Ñ‚Ð¸Ñ‚Ðµ ÐºÐ¾Ð¼ÐµÐ½Ñ‚Ð°Ñ€Ð¸ Ð½Ðµ Ð¼Ð¾Ð³Ð°Ñ‚ Ð´Ð° ÑÐµ Ñ€ÐµÐ´Ð°ÐºÑ‚Ð¸Ñ€Ð°Ñ‚.',
+				commentFormTaskId: comment.taskId
+			});
+		}
+
+		if (comment.body === data.body) {
+			return {
+				commentFormSuccess: true,
+				commentFormTaskId: comment.taskId,
+				commentFormCommentId: comment.id
+			};
+		}
+
+		const editedAt = new Date();
+		const updatedComment = await db.taskComment.update({
+			where: { id: comment.id },
+			data: {
+				body: data.body,
+				editedAt
+			}
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'task_comment_updated',
+			entityType: 'task_comment',
+			entityId: comment.id,
+			oldValueJson: {
+				taskId: comment.taskId,
+				body: comment.body,
+				editedAt: comment.editedAt?.toISOString() ?? null
+			},
+			newValueJson: {
+				taskId: updatedComment.taskId,
+				body: updatedComment.body,
+				editedAt: updatedComment.editedAt?.toISOString() ?? null
+			},
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return {
+			commentFormSuccess: true,
+			commentFormTaskId: comment.taskId,
+			commentFormCommentId: comment.id
+		};
+	},
+
+	deleteComment: async ({ request, locals, getClientAddress }) => {
+		if (!locals.user || !canSoftDeleteTaskComments(locals.user.role)) {
+			return fail(403, { commentDeleteError: 'ÐÑÐ¼Ð°Ñ‚Ðµ Ð¿Ñ€Ð°Ð²Ð° Ð·Ð° Ñ‚Ð°Ð·Ð¸ Ð¾Ð¿ÐµÑ€Ð°Ñ†Ð¸Ñ.' });
+		}
+
+		const company = await getCompanyOrRedirect();
+		const formData = await request.formData();
+		const projectId = String(formData.get('projectId') ?? '');
+		const taskId = String(formData.get('taskId') ?? '');
+		const commentId = String(formData.get('commentId') ?? '');
+		const project = await getScopedProject(company.id, projectId);
+
+		if (!project) {
+			return fail(404, { commentDeleteError: 'ÐŸÑ€Ð¾ÐµÐºÑ‚ÑŠÑ‚ Ð½Ðµ Ðµ Ð½Ð°Ð¼ÐµÑ€ÐµÐ½.', commentDeleteTaskId: taskId });
+		}
+
+		const task = findProjectTask(project, taskId);
+		if (!task) {
+			return fail(404, { commentDeleteError: 'Ð—Ð°Ð´Ð°Ñ‡Ð°Ñ‚Ð° Ð½Ðµ Ðµ Ð½Ð°Ð¼ÐµÑ€ÐµÐ½Ð°.', commentDeleteTaskId: taskId });
+		}
+
+		const comment = task.comments.find((entry) => entry.id === commentId);
+		if (!comment) {
+			return fail(404, { commentDeleteError: 'ÐšÐ¾Ð¼ÐµÐ½Ñ‚Ð°Ñ€ÑŠÑ‚ Ð½Ðµ Ðµ Ð½Ð°Ð¼ÐµÑ€ÐµÐ½.', commentDeleteTaskId: taskId });
+		}
+
+		if (comment.isDeleted) {
+			return { commentDeleteSuccess: true, commentDeleteTaskId: task.id };
+		}
+
+		const deletedAt = new Date();
+		await db.taskComment.update({
+			where: { id: comment.id },
+			data: {
+				isDeleted: true,
+				deletedAt,
+				deletedByUserId: locals.user.id
+			}
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'task_comment_soft_deleted',
+			entityType: 'task_comment',
+			entityId: comment.id,
+			oldValueJson: {
+				taskId: comment.taskId,
+				body: comment.body,
+				isDeleted: comment.isDeleted,
+				deletedAt: comment.deletedAt?.toISOString() ?? null,
+				deletedByUserId: comment.deletedByUserId
+			},
+			newValueJson: {
+				taskId: comment.taskId,
+				body: comment.body,
+				isDeleted: true,
+				deletedAt: deletedAt.toISOString(),
+				deletedByUserId: locals.user.id
+			},
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return { commentDeleteSuccess: true, commentDeleteTaskId: task.id };
 	},
 
 	reopenProject: async ({ request, locals, getClientAddress }) => {

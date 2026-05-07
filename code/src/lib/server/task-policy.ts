@@ -10,6 +10,9 @@ import type { TaskBillingType, TaskPriority, TaskStatus } from '@prisma/client';
 
 export { formatMoneyFromCents, parseOptionalMoneyToCents };
 
+const TASK_COMMENT_AUTHOR_ROLES = ['admin', 'manager', 'employee'] as const;
+const TASK_COMMENT_DELETE_ROLES = ['admin', 'manager'] as const;
+
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
 	todo: 'За изпълнение',
 	in_progress: 'В процес',
@@ -37,6 +40,14 @@ export function canManageProjectTasks(role: string) {
 	return canCreateOrManageProjects(role);
 }
 
+export function canCreateTaskComments(role: string) {
+	return TASK_COMMENT_AUTHOR_ROLES.includes(role as (typeof TASK_COMMENT_AUTHOR_ROLES)[number]);
+}
+
+export function canSoftDeleteTaskComments(role: string) {
+	return TASK_COMMENT_DELETE_ROLES.includes(role as (typeof TASK_COMMENT_DELETE_ROLES)[number]);
+}
+
 export { canViewProjectFinancials };
 
 export function normalizeTaskListName(value: string) {
@@ -48,6 +59,10 @@ export function normalizeTaskTitle(value: string) {
 }
 
 export function normalizeOptionalTaskDescription(value: string) {
+	return normalizeOptionalProjectDescription(value);
+}
+
+export function normalizeTaskCommentBody(value: string) {
 	return normalizeOptionalProjectDescription(value);
 }
 

@@ -38,6 +38,7 @@
 	let selectedTaskId = $state<string | null>(null);
 	let createTaskBillingType = $state<TaskBillingTypeValue>(data.project.client.isInternal ? 'non_billable' : 'hourly');
 	let selectedTaskBillingType = $state<TaskBillingTypeValue>(data.project.client.isInternal ? 'non_billable' : 'hourly');
+	let editingCommentId = $state<string | null>(null);
 
 	function userLabel(user: { firstName: string; lastName: string }) {
 		return `${user.firstName} ${user.lastName}`;
@@ -62,6 +63,16 @@
 			year: 'numeric',
 			timeZone: 'UTC'
 		}).format(new Date(`${value}T00:00:00.000Z`));
+	}
+
+	function formatDateTime(value: string) {
+		return new Intl.DateTimeFormat('bg-BG', {
+			day: '2-digit',
+			month: 'short',
+			year: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit'
+		}).format(new Date(value));
 	}
 
 	function taskListFieldError(field: string) {
@@ -126,6 +137,14 @@
 		return fallback;
 	}
 
+	function commentFieldError(field: string) {
+		return (form as any)?.commentFormErrors?.[field]?.[0];
+	}
+
+	function commentFieldValue(field: string, fallback = '') {
+		return (form as any)?.commentFormValues?.[field] ?? fallback;
+	}
+
 	function taskBillingTypeValue(task: { billingType: string }) {
 		return taskFieldValue('billingType', task.billingType) as TaskBillingTypeValue;
 	}
@@ -149,12 +168,22 @@
 
 	function openTaskModal(taskId: string) {
 		selectedTaskId = taskId;
+		editingCommentId = null;
 		const task = data.project.taskLists.flatMap((taskList) => taskList.tasks).find((entry) => entry.id === taskId);
 		selectedTaskBillingType = task ? taskBillingTypeValue(task) : defaultBillingType();
 	}
 
 	function closeTaskModal() {
 		selectedTaskId = null;
+		editingCommentId = null;
+	}
+
+	function openCommentEditor(commentId: string) {
+		editingCommentId = commentId;
+	}
+
+	function closeCommentEditor() {
+		editingCommentId = null;
 	}
 
 	function activeTask() {
@@ -176,6 +205,18 @@
 
 	function currentCreateTaskListId() {
 		return String(createTaskFieldValue('taskListId', createTaskModal?.taskListId ?? data.project.taskLists[0]?.id ?? ''));
+	}
+
+	function isEditingComment(commentId: string) {
+		return editingCommentId === commentId;
+	}
+
+	function canEditComment(comment: { id: string; authorUserId: string; isDeleted: boolean }) {
+		return data.permissions.canCreateComments && !comment.isDeleted && comment.authorUserId === data.permissions.currentUserId;
+	}
+
+	function canSoftDeleteComment(comment: { isDeleted: boolean }) {
+		return data.permissions.canSoftDeleteComments && !comment.isDeleted;
 	}
 
 	function assigneeNames(
@@ -250,6 +291,22 @@
 
 		if ((form as any)?.taskFormSuccess) {
 			selectedTaskId = null;
+		}
+
+		if ((form as any)?.commentFormTaskId) {
+			selectedTaskId = (form as any).commentFormTaskId;
+		}
+
+		if ((form as any)?.commentDeleteTaskId) {
+			selectedTaskId = (form as any).commentDeleteTaskId;
+		}
+
+		if ((form as any)?.commentFormCommentId && (form as any)?.commentFormErrors) {
+			editingCommentId = (form as any).commentFormCommentId;
+		}
+
+		if ((form as any)?.commentFormSuccess) {
+			editingCommentId = null;
 		}
 	});
 </script>
@@ -750,6 +807,111 @@
 					</div>
 				</div>
 			{/if}
+			<section class="comments-panel">
+				<div class="comments-header">
+					<div>
+						<div class="eyebrow">Коментари</div>
+						<h3>Разговор по задачата</h3>
+					</div>
+					<span class="meta-chip">{task.comments.length} коментара</span>
+				</div>
+
+				{#if (form as any)?.commentFormError}
+					<div class="alert error">{(form as any).commentFormError}</div>
+				{/if}
+				{#if (form as any)?.commentDeleteError}
+					<div class="alert error">{(form as any).commentDeleteError}</div>
+				{/if}
+				{#if (form as any)?.commentFormSuccess}
+					<div class="alert success">Коментарът е запазен.</div>
+				{/if}
+				{#if (form as any)?.commentDeleteSuccess}
+					<div class="alert success">Коментарът е изтрит.</div>
+				{/if}
+
+				{#if data.permissions.canCreateComments}
+					<form method="POST" action="?/createComment" class="comment-composer">
+						<input type="hidden" name="projectId" value={data.project.id} />
+						<input type="hidden" name="taskId" value={task.id} />
+						<label for={'comment-create-' + task.id}>Нов коментар</label>
+						<textarea
+							id={'comment-create-' + task.id}
+							name="body"
+							rows="4"
+							placeholder="Добавете уточнение, решение или следваща стъпка"
+						>{(form as any)?.commentFormCommentId ? '' : commentFieldValue('body')}</textarea>
+						{#if commentFieldError('body') && !(form as any)?.commentFormCommentId}
+							<span class="error-text">{commentFieldError('body')}</span>
+						{/if}
+						<div class="comment-actions">
+							<button type="submit" class="btn-primary">Добави коментар</button>
+						</div>
+					</form>
+				{/if}
+
+				<div class="comment-list">
+					{#if task.comments.length === 0}
+						<p class="empty-state">Все още няма коментари по тази задача.</p>
+					{:else}
+						{#each task.comments as comment}
+							<article class="comment-card" class:deleted={comment.isDeleted}>
+								<div class="comment-meta">
+									<div>
+										<strong>{userLabel(comment.author)}</strong>
+										<span class="comment-time">{formatDateTime(comment.createdAt.toString())}</span>
+										{#if comment.editedAt && !comment.isDeleted}
+											<span class="comment-badge">редактиран</span>
+										{/if}
+										{#if comment.isDeleted}
+											<span class="comment-badge muted">изтрит</span>
+										{/if}
+									</div>
+									<div class="comment-tools">
+										{#if canEditComment(comment)}
+											<button type="button" class="btn-ghost" onclick={() => openCommentEditor(comment.id)}>
+												Редакция
+											</button>
+										{/if}
+										{#if canSoftDeleteComment(comment)}
+											<form method="POST" action="?/deleteComment">
+												<input type="hidden" name="projectId" value={data.project.id} />
+												<input type="hidden" name="taskId" value={task.id} />
+												<input type="hidden" name="commentId" value={comment.id} />
+												<button type="submit" class="btn-ghost danger">Изтрий</button>
+											</form>
+										{/if}
+									</div>
+								</div>
+
+								{#if isEditingComment(comment.id)}
+									<form method="POST" action="?/updateComment" class="comment-editor">
+										<input type="hidden" name="projectId" value={data.project.id} />
+										<input type="hidden" name="taskId" value={task.id} />
+										<input type="hidden" name="commentId" value={comment.id} />
+										<textarea name="body" rows="4">{commentFieldValue('body', comment.body)}</textarea>
+										{#if commentFieldError('body')}
+											<span class="error-text">{commentFieldError('body')}</span>
+										{/if}
+										<div class="comment-actions">
+											<button type="button" class="btn-secondary" onclick={closeCommentEditor}>Отказ</button>
+											<button type="submit" class="btn-primary">Запази</button>
+										</div>
+									</form>
+								{:else if comment.isDeleted}
+									<div class="comment-body deleted-copy">
+										Този коментар е изтрит.
+										{#if comment.deletedAt}
+											<span class="comment-time"> {formatDateTime(comment.deletedAt.toString())}</span>
+										{/if}
+									</div>
+								{:else}
+									<div class="comment-body">{comment.body}</div>
+								{/if}
+							</article>
+						{/each}
+					{/if}
+				</div>
+			</section>
 		</div>
 	</div>
 {/if}
@@ -1308,6 +1470,100 @@
 		min-height: 5rem;
 	}
 
+	.comments-panel {
+		display: grid;
+		gap: 16px;
+		padding: 0 24px 24px;
+		border-top: 1px solid #e2e8f0;
+	}
+
+	.comments-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		padding-top: 20px;
+	}
+
+	.comments-header h3 {
+		margin: 0;
+		font-size: 1.1rem;
+	}
+
+	.comment-composer,
+	.comment-editor {
+		display: grid;
+		gap: 10px;
+	}
+
+	.comment-composer textarea,
+	.comment-editor textarea {
+		min-height: 6rem;
+	}
+
+	.comment-list {
+		display: grid;
+		gap: 12px;
+	}
+
+	.comment-card {
+		display: grid;
+		gap: 10px;
+		padding: 16px 18px;
+		border: 1px solid #dbe4ee;
+		border-radius: 18px;
+		background: #f8fbfd;
+	}
+
+	.comment-card.deleted {
+		background: #f8fafc;
+		border-style: dashed;
+	}
+
+	.comment-meta,
+	.comment-tools,
+	.comment-actions {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+
+	.comment-meta {
+		justify-content: space-between;
+		align-items: flex-start;
+	}
+
+	.comment-tools {
+		flex-wrap: wrap;
+		justify-content: flex-end;
+	}
+
+	.comment-time,
+	.comment-badge {
+		font-size: 0.8rem;
+		color: #64748b;
+		margin-left: 8px;
+	}
+
+	.comment-badge.muted {
+		color: #94a3b8;
+	}
+
+	.comment-body {
+		white-space: pre-wrap;
+		color: #1e293b;
+		line-height: 1.55;
+	}
+
+	.deleted-copy {
+		color: #64748b;
+		font-style: italic;
+	}
+
+	.danger {
+		color: #b91c1c;
+	}
+
 	@media (max-width: 980px) {
 		.hero,
 		.workspace-toolbar,
@@ -1344,6 +1600,7 @@
 		.task-list-header,
 		.modal-header,
 		.modal-form,
+		.comments-panel,
 		.detail-strip,
 		.task-table-head,
 		.task-row {
@@ -1364,6 +1621,17 @@
 			flex-direction: column-reverse;
 		}
 
+		.comments-header,
+		.comment-meta,
+		.comment-actions {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.comment-tools {
+			justify-content: flex-start;
+		}
+
 		.btn-primary,
 		.btn-secondary,
 		.btn-ghost {
@@ -1371,5 +1639,3 @@
 		}
 	}
 </style>
-
-
