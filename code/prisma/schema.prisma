@@ -41,6 +41,8 @@ model User {
   rateHistoryEntries UserRateHistory[]
   projectBillableRateOverrides ProjectMemberBillableRateOverride[]
   recordedPayments InvoicePayment[] @relation("InvoicePaymentRecordedBy")
+  createdExpenses Expense[] @relation("ExpenseCreatedBy")
+  paidExpenses    Expense[] @relation("ExpensePaidBy")
 
   @@map("user")
 }
@@ -109,6 +111,7 @@ model Company {
 
   clients                Client[]
   expenseCategories      ExpenseCategory[]
+  expenses               Expense[]
   ownedTaskAttachments   TaskAttachment[] @relation("TaskAttachmentOwnerCompany")
 }
 
@@ -183,6 +186,11 @@ enum InvoiceStatus {
   voided
 }
 
+enum ExpenseStatus {
+  unpaid
+  paid
+}
+
 enum PaymentMethod {
   bank_transfer
   cash
@@ -206,6 +214,7 @@ model Client {
   contacts          ClientContact[]
   projects          Project[]
   invoices          Invoice[]
+  expenses          Expense[]
 
   @@unique([companyId, legalName])
   @@map("client")
@@ -242,6 +251,7 @@ model Project {
   members              ProjectMember[]
   taskLists            TaskList[]
   memberBillableRateOverrides ProjectMemberBillableRateOverride[]
+  expenses             Expense[]
 
   @@unique([clientId, name])
   @@map("project")
@@ -484,7 +494,36 @@ model ExpenseCategory {
   isActive   Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  expenses   Expense[]
 
   @@unique([companyId, name])
   @@map("expense_category")
+}
+
+model Expense {
+  id                  String          @id @default(cuid())
+  companyId           String
+  company             Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  categoryId          String
+  category            ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  clientId            String?
+  client              Client?         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  projectId           String?
+  project             Project?        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  description         String
+  amountCents         Int
+  incurredDate        DateTime        @db.Date
+  status              ExpenseStatus   @default(unpaid)
+  paidDate            DateTime?       @db.Date
+  paidByUserId        String?
+  paidByUser          User?           @relation("ExpensePaidBy", fields: [paidByUserId], references: [id], onDelete: Restrict)
+  createdByUserId     String
+  createdByUser       User            @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  @@index([companyId, incurredDate])
+  @@index([projectId, incurredDate])
+  @@index([clientId, incurredDate])
+  @@map("expense")
 }

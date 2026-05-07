@@ -25,6 +25,7 @@
 			{/if}
 			{#if ['admin', 'manager', 'accountant'].includes(data.user.role)}
 				<li><a href="/invoiceable-work" aria-current={page.url.pathname === '/invoiceable-work' ? 'page' : undefined}>За фактуриране</a></li>
+				<li><a href="/expenses" aria-current={page.url.pathname === '/expenses' ? 'page' : undefined}>Разходи</a></li>
 			{/if}
 			{#if ['admin', 'accountant'].includes(data.user.role)}
 				<li><a href="/invoices" aria-current={page.url.pathname === '/invoices' ? 'page' : undefined}>Чернови фактури</a></li>
