@@ -47,19 +47,26 @@
 </script>
 
 <svelte:head>
-	<title>Чернови фактури - Иномедия</title>
+	<title>Фактури - Иномедия</title>
 </svelte:head>
 
 <section class="page-header">
 	<div>
-		<h1>Чернови фактури</h1>
-		<p>Преглед и редакция на чернови фактури преди издаване.</p>
+		<h1>Фактури</h1>
+		<p>Преглед, редакция и издаване на клиентски фактури.</p>
 	</div>
 	<a class="btn-secondary" href="/invoiceable-work">Към работа за фактуриране</a>
 </section>
 
 {#if data.draftCreated}
 	<div class="alert success">Черновата е създадена.</div>
+{/if}
+
+{#if data.issuedInvoiceId}
+	<div class="alert success">
+		Фактурата е издадена.
+		<a href={`/invoices/${data.issuedInvoiceId}/pdf`} target="_blank" rel="noreferrer">Отвори PDF</a>
+	</div>
 {/if}
 
 {#if data.drafts.length === 0}
@@ -73,7 +80,7 @@
 			<section class="card draft-card">
 				<header class="draft-header">
 					<div>
-						<div class="eyebrow">Клиент</div>
+						<div class="eyebrow">Чернова</div>
 						<h2>{draft.client.legalName}</h2>
 						<p>Създадена от {draft.createdByUser.firstName} {draft.createdByUser.lastName}</p>
 					</div>
@@ -123,9 +130,8 @@
 							/>
 						</div>
 						<div class="field totals-field">
-							<span class="meta-label">Общо</span>
+							<span class="meta-label">Нетно</span>
 							<strong>{formatMoney(draft.netTotalCents)}</strong>
-							<small>Нетно</small>
 						</div>
 						<div class="field totals-field">
 							<span class="meta-label">ДДС</span>
@@ -135,7 +141,6 @@
 						<div class="field totals-field">
 							<span class="meta-label">Крайна сума</span>
 							<strong>{formatMoney(draft.grossTotalCents)}</strong>
-							<small>С ДДС</small>
 						</div>
 					</div>
 
@@ -170,8 +175,11 @@
 							<button class="btn-secondary" type="submit" formaction="?/recalculateDraft">
 								Преизчисли
 							</button>
-							<button class="btn-primary" type="submit" formaction="?/saveDraft">
-								Запази чернова
+							<button class="btn-secondary" type="submit" formaction="?/saveDraft">
+								Запази
+							</button>
+							<button class="btn-primary" type="submit" formaction="?/issueDraft">
+								Издай фактура
 							</button>
 						</div>
 					</div>
@@ -179,6 +187,34 @@
 			</section>
 		{/each}
 	</div>
+{/if}
+
+{#if data.issuedInvoices.length > 0}
+	<section class="card issued-card">
+		<header class="section-header">
+			<div>
+				<div class="eyebrow">Издадени</div>
+				<h2>Последни фактури</h2>
+			</div>
+		</header>
+
+		<div class="issued-list">
+			{#each data.issuedInvoices as invoice}
+				<div class="issued-row">
+					<div>
+						<strong>№ {invoice.invoiceNumber ?? 'Без номер'}</strong>
+						<div class="issued-meta">{invoice.client.legalName} · {formatDate(invoice.issueDate)}</div>
+					</div>
+					<div class="issued-actions">
+						<span class="issued-amount">{formatMoney(invoice.grossTotalCents)}</span>
+						<a class="btn-secondary" href={`/invoices/${invoice.id}/pdf`} target="_blank" rel="noreferrer">
+							PDF
+						</a>
+					</div>
+				</div>
+			{/each}
+		</div>
+	</section>
 {/if}
 
 <style>
@@ -196,7 +232,8 @@
 		color: #0f172a;
 	}
 
-	.page-header p {
+	.page-header p,
+	.issued-meta {
 		margin: 8px 0 0;
 		color: #64748b;
 	}
@@ -232,6 +269,11 @@
 		margin-bottom: 16px;
 	}
 
+	.alert a {
+		font-weight: 700;
+		margin-left: 8px;
+	}
+
 	.alert.success {
 		background: #f0fdf4;
 		border: 1px solid #bbf7d0;
@@ -251,13 +293,15 @@
 	}
 
 	.empty-card,
-	.draft-card {
+	.draft-card,
+	.issued-card {
 		padding: 20px;
 	}
 
 	.draft-list,
 	.draft-form,
-	.selection-list {
+	.selection-list,
+	.issued-list {
 		display: grid;
 		gap: 16px;
 	}
@@ -265,7 +309,10 @@
 	.draft-header,
 	.selection-head,
 	.draft-actions,
-	.draft-buttons {
+	.draft-buttons,
+	.issued-row,
+	.issued-actions,
+	.section-header {
 		display: flex;
 		justify-content: space-between;
 		gap: 16px;
@@ -328,9 +375,12 @@
 		align-content: start;
 	}
 
-	.totals-field strong {
+	.totals-field strong,
+	.issued-amount,
+	.selection-amount {
 		font-size: 1.05rem;
 		color: #0f172a;
+		font-weight: 700;
 	}
 
 	.totals-field small,
@@ -340,17 +390,16 @@
 		color: #64748b;
 	}
 
-	.selection-card {
+	.selection-card,
+	.issued-row {
 		border: 1px solid #e2e8f0;
 		border-radius: 14px;
 		padding: 16px;
-		display: grid;
-		gap: 12px;
 	}
 
-	.selection-amount {
-		font-weight: 700;
-		color: #0f172a;
+	.selection-card {
+		display: grid;
+		gap: 12px;
 	}
 
 	.draft-actions {
@@ -358,8 +407,10 @@
 		padding-top: 4px;
 	}
 
-	.draft-buttons {
+	.draft-buttons,
+	.issued-actions {
 		justify-content: flex-end;
+		align-items: center;
 	}
 
 	@media (max-width: 960px) {
@@ -367,7 +418,10 @@
 		.draft-header,
 		.selection-head,
 		.draft-actions,
-		.draft-buttons {
+		.draft-buttons,
+		.issued-row,
+		.issued-actions,
+		.section-header {
 			flex-direction: column;
 		}
 

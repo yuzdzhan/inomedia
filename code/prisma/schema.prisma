@@ -398,6 +398,9 @@ model Invoice {
   isStaleDraft          Boolean           @default(false)
   lastUpdatedAt         DateTime          @default(now())
   issuedSnapshotJson    Json?
+  issuedPdfFilename     String?
+  issuedPdfContentType  String?
+  issuedPdfBlob         Bytes?
   voidReason            String?
   createdByUserId       String
   createdByUser         User              @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)

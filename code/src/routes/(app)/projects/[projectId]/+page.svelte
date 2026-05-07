@@ -344,13 +344,14 @@
 		return `${hours}ч ${minutes.toString().padStart(2, '0')}м`;
 	}
 
-	function formatShortDate(value: string) {
+	function formatShortDate(value: Date | string) {
+		const date = value instanceof Date ? value : new Date(`${value}T00:00:00.000Z`);
 		return new Intl.DateTimeFormat('bg-BG', {
 			day: '2-digit',
 			month: 'short',
 			year: 'numeric',
 			timeZone: 'UTC'
-		}).format(new Date(`${value}T00:00:00.000Z`));
+		}).format(date);
 	}
 
 	function formatMinuteOfDay(value: number | null) {
@@ -1135,7 +1136,7 @@
 								<div class="comment-meta">
 									<div>
 										<strong>{userLabel(timeLog.user)}</strong>
-										<span class="comment-time">{formatShortDate(timeLog.workDate.toString())}</span>
+										<span class="comment-time">{formatShortDate(timeLog.workDate)}</span>
 										<span class="comment-badge">{formatMinutes(timeLog.durationMinutes)}</span>
 										{#if timeLog.startMinuteOfDay != null && timeLog.endMinuteOfDay != null}
 											<span class="comment-badge muted">
