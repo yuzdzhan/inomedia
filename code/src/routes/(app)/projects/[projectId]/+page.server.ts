@@ -473,6 +473,17 @@ function validateTaskTimeLog(
 	return null;
 }
 
+function isCurrentMonthInTimezone(date: Date, timezone: string) {
+	return formatDateInTimezone(date, timezone).slice(0, 7) === formatDateInTimezone(new Date(), timezone).slice(0, 7);
+}
+
+function canUserManageProjectTimeLogs(
+	user: { id: string; role: string },
+	project: { primaryManagerUserId: string }
+) {
+	return user.role === 'admin' || (user.role === 'manager' && project.primaryManagerUserId === user.id);
+}
+
 export const load: PageServerLoad = async ({ params, parent, url }) => {
 	const { user } = await parent();
 	if (!canAccessProjectTasks(user.role)) {
@@ -519,6 +530,7 @@ export const load: PageServerLoad = async ({ params, parent, url }) => {
 		showClosed,
 		permissions: {
 			currentUserId: user.id,
+			currentUserRole: user.role,
 			canManageTasks: canManageProjectTasks(user.role),
 			canManageProjects: canCreateOrManageProjects(user.role),
 			canCreateComments: canCreateTaskComments(user.role),
@@ -1240,6 +1252,254 @@ export const actions: Actions = {
 		});
 
 		return { timeLogFormSuccess: true, timeLogFormTaskId: task.id };
+	},
+
+	updateTimeLog: async ({ request, locals, getClientAddress }) => {
+		if (!locals.user || !canAccessProjectTasks(locals.user.role)) {
+			return fail(403, { timeLogFormError: 'Нямате права за тази операция.' });
+		}
+
+		const user = locals.user;
+		const company = await getCompanyOrRedirect();
+		const formData = await request.formData();
+		const timeLogId = String(formData.get('timeLogId') ?? '');
+		const raw = buildTaskTimeLogInput(formData);
+		const parsed = taskTimeLogSchema.safeParse(raw);
+
+		if (!parsed.success) {
+			return fail(422, {
+				timeLogFormErrors: parsed.error.flatten().fieldErrors,
+				timeLogFormValues: raw,
+				timeLogFormTaskId: raw.taskId,
+				timeLogFormTimeLogId: timeLogId
+			});
+		}
+
+		const data = normalizeTaskTimeLogPayload(parsed.data);
+		const validation = validateTaskTimeLog(data, company.timezone);
+		if (validation) {
+			return fail(422, {
+				timeLogFormErrors: { [validation.field]: [validation.message] },
+				timeLogFormValues: raw,
+				timeLogFormTaskId: raw.taskId,
+				timeLogFormTimeLogId: timeLogId
+			});
+		}
+
+		const workDate = data.workDate;
+		if (!workDate) {
+			return fail(422, {
+				timeLogFormErrors: { workDate: ['Използвайте валидна дата.'] },
+				timeLogFormValues: raw,
+				timeLogFormTaskId: raw.taskId,
+				timeLogFormTimeLogId: timeLogId
+			});
+		}
+
+		const timeLog = await db.taskTimeLog.findUnique({
+			where: { id: timeLogId },
+			select: {
+				id: true,
+				taskId: true,
+				userId: true,
+				workDate: true,
+				description: true,
+				durationMinutes: true,
+				startMinuteOfDay: true,
+				endMinuteOfDay: true,
+				invoicedAt: true,
+				task: {
+					include: {
+						assignees: { select: { userId: true } },
+						taskList: {
+							include: {
+								project: {
+									include: {
+										client: { select: { companyId: true } }
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		});
+
+		if (!timeLog || timeLog.task.taskList.project.client.companyId !== company.id || timeLog.taskId !== data.taskId) {
+			return fail(404, { timeLogFormError: 'Отчетът не е намерен.', timeLogFormTaskId: raw.taskId });
+		}
+
+		const canManage = canUserManageProjectTimeLogs(user, timeLog.task.taskList.project);
+		const canEditOwn =
+			user.role === 'employee' &&
+			timeLog.userId === user.id &&
+			timeLog.invoicedAt == null &&
+			isCurrentMonthInTimezone(timeLog.workDate, company.timezone);
+
+		if (!canManage && !canEditOwn) {
+			return fail(403, {
+				timeLogFormError: 'Нямате права да редактирате този отчет.',
+				timeLogFormTaskId: timeLog.taskId
+			});
+		}
+
+		if (timeLog.invoicedAt) {
+			return fail(409, {
+				timeLogFormError: 'Фактурираните отчети не могат да се редактират.',
+				timeLogFormTaskId: timeLog.taskId
+			});
+		}
+
+		if (data.startMinuteOfDay != null && data.endMinuteOfDay != null) {
+			const overlappingLog = await db.taskTimeLog.findFirst({
+				where: {
+					id: { not: timeLog.id },
+					userId: timeLog.userId,
+					workDate: workDate,
+					startMinuteOfDay: { not: null, lt: data.endMinuteOfDay },
+					endMinuteOfDay: { not: null, gt: data.startMinuteOfDay }
+				},
+				select: { id: true }
+			});
+
+			if (overlappingLog) {
+				return fail(409, {
+					timeLogFormErrors: { startTime: ['Има друго засичане за този ден и часови диапазон.'] },
+					timeLogFormValues: raw,
+					timeLogFormTaskId: timeLog.taskId,
+					timeLogFormTimeLogId: timeLog.id
+				});
+			}
+		}
+
+		const updatedTimeLog = await db.taskTimeLog.update({
+			where: { id: timeLog.id },
+			data: {
+				workDate,
+				description: data.description,
+				durationMinutes: data.durationMinutes,
+				startMinuteOfDay: data.startMinuteOfDay,
+				endMinuteOfDay: data.endMinuteOfDay
+			}
+		});
+
+		await logAuditEvent({
+			actorUserId: user.id,
+			eventType: 'task_time_log_updated',
+			entityType: 'task_time_log',
+			entityId: updatedTimeLog.id,
+			oldValueJson: {
+				workDate: formatDateForInput(timeLog.workDate),
+				description: timeLog.description,
+				durationMinutes: timeLog.durationMinutes,
+				startMinuteOfDay: timeLog.startMinuteOfDay,
+				endMinuteOfDay: timeLog.endMinuteOfDay
+			},
+			newValueJson: {
+				workDate: formatDateForInput(updatedTimeLog.workDate),
+				description: updatedTimeLog.description,
+				durationMinutes: updatedTimeLog.durationMinutes,
+				startMinuteOfDay: updatedTimeLog.startMinuteOfDay,
+				endMinuteOfDay: updatedTimeLog.endMinuteOfDay
+			},
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return {
+			timeLogFormSuccess: true,
+			timeLogFormTaskId: timeLog.taskId,
+			timeLogFormTimeLogId: timeLog.id
+		};
+	},
+
+	deleteTimeLog: async ({ request, locals, getClientAddress }) => {
+		if (!locals.user || !canAccessProjectTasks(locals.user.role)) {
+			return fail(403, { timeLogDeleteError: 'Нямате права за тази операция.' });
+		}
+
+		const user = locals.user;
+		const company = await getCompanyOrRedirect();
+		const formData = await request.formData();
+		const taskId = String(formData.get('taskId') ?? '');
+		const timeLogId = String(formData.get('timeLogId') ?? '');
+		const timeLog = await db.taskTimeLog.findUnique({
+			where: { id: timeLogId },
+			select: {
+				id: true,
+				taskId: true,
+				userId: true,
+				workDate: true,
+				description: true,
+				durationMinutes: true,
+				startMinuteOfDay: true,
+				endMinuteOfDay: true,
+				invoicedAt: true,
+				task: {
+					include: {
+						taskList: {
+							include: {
+								project: {
+									include: {
+										client: { select: { companyId: true } }
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		});
+
+		if (!timeLog || timeLog.task.taskList.project.client.companyId !== company.id || timeLog.taskId !== taskId) {
+			return fail(404, { timeLogDeleteError: 'Отчетът не е намерен.', timeLogDeleteTaskId: taskId });
+		}
+
+		const canManage = canUserManageProjectTimeLogs(user, timeLog.task.taskList.project);
+		const canDeleteOwn =
+			user.role === 'employee' &&
+			timeLog.userId === user.id &&
+			timeLog.invoicedAt == null &&
+			isCurrentMonthInTimezone(timeLog.workDate, company.timezone);
+
+		if (!canManage && !canDeleteOwn) {
+			return fail(403, {
+				timeLogDeleteError: 'Нямате права да изтриете този отчет.',
+				timeLogDeleteTaskId: timeLog.taskId
+			});
+		}
+
+		if (timeLog.invoicedAt) {
+			return fail(409, {
+				timeLogDeleteError: 'Фактурираните отчети не могат да се изтриват.',
+				timeLogDeleteTaskId: timeLog.taskId
+			});
+		}
+
+		await db.taskTimeLog.delete({
+			where: { id: timeLog.id }
+		});
+
+		await logAuditEvent({
+			actorUserId: user.id,
+			eventType: 'task_time_log_deleted',
+			entityType: 'task_time_log',
+			entityId: timeLog.id,
+			oldValueJson: {
+				taskId: timeLog.taskId,
+				userId: timeLog.userId,
+				workDate: formatDateForInput(timeLog.workDate),
+				description: timeLog.description,
+				durationMinutes: timeLog.durationMinutes,
+				startMinuteOfDay: timeLog.startMinuteOfDay,
+				endMinuteOfDay: timeLog.endMinuteOfDay
+			},
+			reason: canManage ? 'manager_admin_delete' : 'employee_delete',
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return { timeLogDeleteSuccess: true, timeLogDeleteTaskId: timeLog.taskId };
 	},
 
 	deleteComment: async ({ request, locals, getClientAddress }) => {

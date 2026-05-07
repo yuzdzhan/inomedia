@@ -46,6 +46,7 @@
 		durationMinutes: number;
 		startMinuteOfDay: number | null;
 		endMinuteOfDay: number | null;
+		invoicedAt: string | Date | null;
 		createdAt: string | Date;
 		user: { id: string; firstName: string; lastName: string };
 	};
@@ -57,6 +58,7 @@
 	let createTaskBillingType = $state<TaskBillingTypeValue>(data.project.client.isInternal ? 'non_billable' : 'hourly');
 	let selectedTaskBillingType = $state<TaskBillingTypeValue>(data.project.client.isInternal ? 'non_billable' : 'hourly');
 	let editingCommentId = $state<string | null>(null);
+	let editingTimeLogId = $state<string | null>(null);
 
 	function userLabel(user: { firstName: string; lastName: string }) {
 		return `${user.firstName} ${user.lastName}`;
@@ -197,6 +199,18 @@
 		return (form as any)?.timeLogFormValues?.[field] ?? fallback;
 	}
 
+	function timeLogFormTimeLogId() {
+		return (form as any)?.timeLogFormTimeLogId ?? null;
+	}
+
+	function createTimeLogFieldValue(field: string, fallback = '') {
+		return timeLogFormTimeLogId() ? fallback : timeLogFieldValue(field, fallback);
+	}
+
+	function createTimeLogFieldError(field: string) {
+		return timeLogFormTimeLogId() ? null : timeLogFieldError(field);
+	}
+
 	function taskBillingTypeValue(task: { billingType: string }) {
 		return taskFieldValue('billingType', task.billingType) as TaskBillingTypeValue;
 	}
@@ -238,6 +252,14 @@
 		editingCommentId = null;
 	}
 
+	function openTimeLogEditor(timeLogId: string) {
+		editingTimeLogId = timeLogId;
+	}
+
+	function closeTimeLogEditor() {
+		editingTimeLogId = null;
+	}
+
 	function activeTask() {
 		if (!selectedTaskId) {
 			return null;
@@ -273,6 +295,26 @@
 
 	function canCreateTimeLog(task: { assignees: Array<{ userId: string }> }) {
 		return data.permissions.canCreateTimeLogs && task.assignees.some((assignee) => assignee.userId === data.permissions.currentUserId);
+	}
+
+	function isEditingTimeLog(timeLogId: string) {
+		return editingTimeLogId === timeLogId;
+	}
+
+	function canChangeTimeLog(timeLog: TimeLogView) {
+		if ((timeLog as any).invoicedAt) {
+			return false;
+		}
+
+		if (data.permissions.currentUserRole === 'admin') {
+			return true;
+		}
+
+		if (data.permissions.currentUserRole === 'manager') {
+			return data.project.primaryManagerUserId === data.permissions.currentUserId;
+		}
+
+		return timeLog.user.id === data.permissions.currentUserId;
 	}
 
 	function assigneeNames(
@@ -312,6 +354,11 @@
 		const hours = Math.floor(value / 60);
 		const minutes = value % 60;
 		return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+	}
+
+	function formatDateInputValue(value: string | Date) {
+		const date = value instanceof Date ? value : new Date(value);
+		return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
 	}
 
 	const filteredTaskLists = $derived.by(() => {
@@ -388,6 +435,22 @@
 
 		if ((form as any)?.commentFormSuccess) {
 			editingCommentId = null;
+		}
+
+		if ((form as any)?.timeLogFormTaskId) {
+			selectedTaskId = (form as any).timeLogFormTaskId;
+		}
+
+		if ((form as any)?.timeLogFormTimeLogId && (form as any)?.timeLogFormErrors) {
+			editingTimeLogId = (form as any).timeLogFormTimeLogId;
+		}
+
+		if ((form as any)?.timeLogFormSuccess) {
+			editingTimeLogId = null;
+		}
+
+		if ((form as any)?.timeLogDeleteTaskId) {
+			selectedTaskId = (form as any).timeLogDeleteTaskId;
 		}
 	});
 </script>
@@ -959,6 +1022,12 @@
 				{#if (form as any)?.timeLogFormSuccess}
 					<div class="alert success">Времето е отчетено.</div>
 				{/if}
+				{#if (form as any)?.timeLogDeleteError}
+					<div class="alert error">{(form as any).timeLogDeleteError}</div>
+				{/if}
+				{#if (form as any)?.timeLogDeleteSuccess}
+					<div class="alert success">Отчетът е изтрит.</div>
+				{/if}
 
 				{#if canCreateTimeLog(task)}
 					<form method="POST" action="?/createTimeLog" class="time-log-form">
@@ -972,9 +1041,9 @@
 									name="workDate"
 									type="date"
 									max={data.today}
-									value={timeLogFieldValue('workDate', data.today)}
+									value={createTimeLogFieldValue('workDate', data.today)}
 								/>
-								{#if timeLogFieldError('workDate')}<span class="error-text">{timeLogFieldError('workDate')}</span>{/if}
+								{#if createTimeLogFieldError('workDate')}<span class="error-text">{createTimeLogFieldError('workDate')}</span>{/if}
 							</div>
 							<div class="field">
 								<label for={'timelog-duration-' + task.id}>Минути</label>
@@ -984,19 +1053,19 @@
 									type="number"
 									min="15"
 									step="15"
-									value={timeLogFieldValue('durationMinutes')}
+									value={createTimeLogFieldValue('durationMinutes')}
 								/>
-								{#if timeLogFieldError('durationMinutes')}<span class="error-text">{timeLogFieldError('durationMinutes')}</span>{/if}
+								{#if createTimeLogFieldError('durationMinutes')}<span class="error-text">{createTimeLogFieldError('durationMinutes')}</span>{/if}
 							</div>
 							<div class="field">
 								<label for={'timelog-start-' + task.id}>Начало</label>
-								<input id={'timelog-start-' + task.id} name="startTime" type="time" value={timeLogFieldValue('startTime')} />
-								{#if timeLogFieldError('startTime')}<span class="error-text">{timeLogFieldError('startTime')}</span>{/if}
+								<input id={'timelog-start-' + task.id} name="startTime" type="time" value={createTimeLogFieldValue('startTime')} />
+								{#if createTimeLogFieldError('startTime')}<span class="error-text">{createTimeLogFieldError('startTime')}</span>{/if}
 							</div>
 							<div class="field">
 								<label for={'timelog-end-' + task.id}>Край</label>
-								<input id={'timelog-end-' + task.id} name="endTime" type="time" value={timeLogFieldValue('endTime')} />
-								{#if timeLogFieldError('endTime')}<span class="error-text">{timeLogFieldError('endTime')}</span>{/if}
+								<input id={'timelog-end-' + task.id} name="endTime" type="time" value={createTimeLogFieldValue('endTime')} />
+								{#if createTimeLogFieldError('endTime')}<span class="error-text">{createTimeLogFieldError('endTime')}</span>{/if}
 							</div>
 						</div>
 						<div class="field">
@@ -1006,8 +1075,8 @@
 								name="description"
 								rows="3"
 								placeholder="Кратко описание на извършената работа"
-							>{timeLogFieldValue('description')}</textarea>
-							{#if timeLogFieldError('description')}<span class="error-text">{timeLogFieldError('description')}</span>{/if}
+							>{createTimeLogFieldValue('description')}</textarea>
+							{#if createTimeLogFieldError('description')}<span class="error-text">{createTimeLogFieldError('description')}</span>{/if}
 						</div>
 						<div class="comment-actions">
 							<button type="submit" class="btn-primary">Добави отчет</button>
@@ -1031,9 +1100,90 @@
 												{formatMinuteOfDay(timeLog.startMinuteOfDay)} - {formatMinuteOfDay(timeLog.endMinuteOfDay)}
 											</span>
 										{/if}
+										{#if timeLog.invoicedAt}
+											<span class="comment-badge">фактуриран</span>
+										{/if}
+									</div>
+									<div class="comment-tools">
+										{#if canChangeTimeLog(timeLog)}
+											<button type="button" class="btn-ghost" onclick={() => openTimeLogEditor(timeLog.id)}>
+												Редакция
+											</button>
+											<form method="POST" action="?/deleteTimeLog">
+												<input type="hidden" name="taskId" value={task.id} />
+												<input type="hidden" name="timeLogId" value={timeLog.id} />
+												<button type="submit" class="btn-ghost danger">Изтрий</button>
+											</form>
+										{/if}
 									</div>
 								</div>
-								<div class="comment-body">{timeLog.description}</div>
+								{#if isEditingTimeLog(timeLog.id)}
+									<form method="POST" action="?/updateTimeLog" class="time-log-form">
+										<input type="hidden" name="projectId" value={data.project.id} />
+										<input type="hidden" name="taskId" value={task.id} />
+										<input type="hidden" name="timeLogId" value={timeLog.id} />
+										<div class="grid two">
+											<div class="field">
+												<label for={'timelog-edit-date-' + timeLog.id}>Дата</label>
+												<input
+													id={'timelog-edit-date-' + timeLog.id}
+													name="workDate"
+													type="date"
+													max={data.today}
+													value={timeLogFieldValue('workDate', formatDateInputValue(timeLog.workDate))}
+												/>
+												{#if timeLogFieldError('workDate')}<span class="error-text">{timeLogFieldError('workDate')}</span>{/if}
+											</div>
+											<div class="field">
+												<label for={'timelog-edit-duration-' + timeLog.id}>Минути</label>
+												<input
+													id={'timelog-edit-duration-' + timeLog.id}
+													name="durationMinutes"
+													type="number"
+													min="15"
+													step="15"
+													value={timeLogFieldValue('durationMinutes', String(timeLog.durationMinutes))}
+												/>
+												{#if timeLogFieldError('durationMinutes')}<span class="error-text">{timeLogFieldError('durationMinutes')}</span>{/if}
+											</div>
+											<div class="field">
+												<label for={'timelog-edit-start-' + timeLog.id}>Начало</label>
+												<input
+													id={'timelog-edit-start-' + timeLog.id}
+													name="startTime"
+													type="time"
+													value={timeLogFieldValue('startTime', formatMinuteOfDay(timeLog.startMinuteOfDay))}
+												/>
+												{#if timeLogFieldError('startTime')}<span class="error-text">{timeLogFieldError('startTime')}</span>{/if}
+											</div>
+											<div class="field">
+												<label for={'timelog-edit-end-' + timeLog.id}>Край</label>
+												<input
+													id={'timelog-edit-end-' + timeLog.id}
+													name="endTime"
+													type="time"
+													value={timeLogFieldValue('endTime', formatMinuteOfDay(timeLog.endMinuteOfDay))}
+												/>
+												{#if timeLogFieldError('endTime')}<span class="error-text">{timeLogFieldError('endTime')}</span>{/if}
+											</div>
+										</div>
+										<div class="field">
+											<label for={'timelog-edit-description-' + timeLog.id}>Какво беше свършено</label>
+											<textarea
+												id={'timelog-edit-description-' + timeLog.id}
+												name="description"
+												rows="3"
+											>{timeLogFieldValue('description', timeLog.description)}</textarea>
+											{#if timeLogFieldError('description')}<span class="error-text">{timeLogFieldError('description')}</span>{/if}
+										</div>
+										<div class="comment-actions">
+											<button type="button" class="btn-secondary" onclick={closeTimeLogEditor}>Отказ</button>
+											<button type="submit" class="btn-primary">Запази</button>
+										</div>
+									</form>
+								{:else}
+									<div class="comment-body">{timeLog.description}</div>
+								{/if}
 							</article>
 						{/each}
 					{/if}

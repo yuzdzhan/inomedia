@@ -347,6 +347,7 @@ model TaskTimeLog {
   durationMinutes  Int
   startMinuteOfDay Int?
   endMinuteOfDay   Int?
+  invoicedAt       DateTime?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
