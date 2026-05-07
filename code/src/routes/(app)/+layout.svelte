@@ -37,6 +37,9 @@
 				<li><a href="/reports/expenses" aria-current={page.url.pathname.startsWith('/reports/expenses') ? 'page' : undefined}>Разходи и прогноза</a></li>
 				<li><a href="/reports/profitability" aria-current={page.url.pathname.startsWith('/reports/profitability') ? 'page' : undefined}>Рентабилност</a></li>
 			{/if}
+			{#if ['admin', 'accountant'].includes(data.user.role)}
+				<li><a href="/reports/cash-position" aria-current={page.url.pathname.startsWith('/reports/cash-position') ? 'page' : undefined}>Парична позиция</a></li>
+			{/if}
 			{#if data.user.role === 'admin'}
 				<li><a href="/settings" aria-current={page.url.pathname === '/settings' ? 'page' : undefined}>Настройки</a></li>
 				<li><a href="/users" aria-current={page.url.pathname === '/users' ? 'page' : undefined}>Потребители</a></li>
