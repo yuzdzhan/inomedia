@@ -233,6 +233,7 @@ model MoneyContainer {
   updatedAt           DateTime            @updatedAt
   ledgerEntries       LedgerEntry[]
   standaloneIncomes   StandaloneIncome[]
+  paidExpenses        Expense[]           @relation("ExpensePaidFromContainer")
 
   @@unique([companyId, containerType])
   @@map("money_container")
@@ -250,6 +251,8 @@ model LedgerEntry {
   invoicePayment      InvoicePayment?   @relation(fields: [invoicePaymentId], references: [id], onDelete: SetNull)
   standaloneIncomeId  String?           @unique
   standaloneIncome    StandaloneIncome? @relation(fields: [standaloneIncomeId], references: [id], onDelete: SetNull)
+  expenseId           String?           @unique
+  expense             Expense?          @relation("ExpenseLedgerEntry", fields: [expenseId], references: [id], onDelete: SetNull)
   transferPairId      String?
   createdByUserId     String
   createdByUser       User              @relation("LedgerEntryCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
@@ -606,6 +609,9 @@ model Expense {
   paidDate            DateTime?       @db.Date
   paidByUserId        String?
   paidByUser          User?           @relation("ExpensePaidBy", fields: [paidByUserId], references: [id], onDelete: Restrict)
+  paidContainerId     String?
+  paidContainer       MoneyContainer? @relation("ExpensePaidFromContainer", fields: [paidContainerId], references: [id], onDelete: SetNull)
+  ledgerEntry         LedgerEntry?    @relation("ExpenseLedgerEntry")
   recurringTemplateId String?
   recurringTemplate   RecurringExpenseTemplate? @relation(fields: [recurringTemplateId], references: [id], onDelete: SetNull)
   isFromTemplate      Boolean         @default(false)

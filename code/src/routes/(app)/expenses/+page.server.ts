@@ -2,6 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
+import { createExpensePaymentLedgerEntry, ensureMoneyContainers } from '$lib/server/ledger';
 import type { Actions, PageServerLoad } from './$types';
 
 // ─── Role helpers ──────────────────────────────────────────────────────────
@@ -155,6 +156,9 @@ export const load: PageServerLoad = async ({ parent }) => {
 		accessibleProjects = managerProjects.map((p) => p.id);
 	}
 
+	// Load money containers (ensure they exist)
+	const moneyContainers = await ensureMoneyContainers(company.id);
+
 	// Load expenses based on role
 	const expenseWhere =
 		user.role === 'manager'
@@ -172,7 +176,8 @@ export const load: PageServerLoad = async ({ parent }) => {
 			client: { select: { id: true, legalName: true } },
 			project: { select: { id: true, name: true } },
 			createdByUser: { select: { id: true, firstName: true, lastName: true } },
-			paidByUser: { select: { id: true, firstName: true, lastName: true } }
+			paidByUser: { select: { id: true, firstName: true, lastName: true } },
+			paidContainer: { select: { id: true, name: true, containerType: true } }
 		}
 	});
 
@@ -197,6 +202,7 @@ export const load: PageServerLoad = async ({ parent }) => {
 		expenses,
 		recurringTemplates,
 		accessibleProjects,
+		moneyContainers,
 		permissions: {
 			canManageFinance: canManageFinanceExpenses(user.role),
 			canManageProject: canManageProjectExpenses(user.role),
@@ -423,9 +429,13 @@ export const actions: Actions = {
 		const formData = await request.formData();
 		const expenseId = String(formData.get('expenseId') ?? '');
 		const paidDate = String(formData.get('paidDate') ?? '');
+		const containerId = String(formData.get('containerId') ?? '');
 
 		if (!paidDate) {
 			return fail(422, { markPaidError: 'Въведете дата на плащане.', markPaidExpenseId: expenseId });
+		}
+		if (!containerId) {
+			return fail(422, { markPaidError: 'Изберете сметка за плащане.', markPaidExpenseId: expenseId });
 		}
 
 		const expense = await db.expense.findUnique({ where: { id: expenseId } });
@@ -436,13 +446,34 @@ export const actions: Actions = {
 			return fail(400, { markPaidError: 'Разходът вече е маркиран като платен.', markPaidExpenseId: expenseId });
 		}
 
-		await db.expense.update({
-			where: { id: expenseId },
-			data: {
-				status: 'paid',
-				paidDate: new Date(paidDate),
-				paidByUserId: locals.user.id
-			}
+		// Verify container exists and belongs to this company
+		const container = await db.moneyContainer.findUnique({ where: { id: containerId } });
+		if (!container) {
+			return fail(400, { markPaidError: 'Невалидна сметка.', markPaidExpenseId: expenseId });
+		}
+
+		const paidDateObj = new Date(paidDate);
+
+		await db.$transaction(async (tx) => {
+			await tx.expense.update({
+				where: { id: expenseId },
+				data: {
+					status: 'paid',
+					paidDate: paidDateObj,
+					paidByUserId: locals.user!.id,
+					paidContainerId: containerId
+				}
+			});
+
+			await createExpensePaymentLedgerEntry(
+				tx,
+				expenseId,
+				containerId,
+				expense.amountCents,
+				paidDateObj,
+				expense.description,
+				locals.user!.id
+			);
 		});
 
 		await logAuditEvent({
@@ -451,12 +482,67 @@ export const actions: Actions = {
 			entityType: 'expense',
 			entityId: expenseId,
 			oldValueJson: { status: 'unpaid' },
-			newValueJson: { status: 'paid', paidDate, paidByUserId: locals.user.id },
+			newValueJson: { status: 'paid', paidDate, paidByUserId: locals.user.id, containerId },
 			ipAddress: getClientAddress(),
 			userAgent: request.headers.get('user-agent') ?? undefined
 		});
 
 		return { markPaidSuccess: true, markPaidExpenseId: expenseId };
+	},
+
+	reopenExpense: async ({ request, locals, getClientAddress }) => {
+		if (!locals.user || !canMarkPaid(locals.user.role)) {
+			return fail(403, { reopenExpenseError: 'Нямате права за тази операция.' });
+		}
+
+		const formData = await request.formData();
+		const expenseId = String(formData.get('expenseId') ?? '');
+
+		const expense = await db.expense.findUnique({
+			where: { id: expenseId },
+			include: { ledgerEntry: true }
+		});
+		if (!expense) {
+			return fail(404, { reopenExpenseError: 'Разходът не е намерен.' });
+		}
+		if (expense.status === 'unpaid') {
+			return fail(400, { reopenExpenseError: 'Разходът вече е неплатен.' });
+		}
+
+		await db.$transaction(async (tx) => {
+			// Delete the linked ledger entry if it exists (reverses the cash effect)
+			if (expense.ledgerEntry) {
+				await tx.ledgerEntry.delete({ where: { id: expense.ledgerEntry.id } });
+			}
+
+			await tx.expense.update({
+				where: { id: expenseId },
+				data: {
+					status: 'unpaid',
+					paidDate: null,
+					paidByUserId: null,
+					paidContainerId: null
+				}
+			});
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'expense_reopened',
+			entityType: 'expense',
+			entityId: expenseId,
+			oldValueJson: {
+				status: 'paid',
+				paidDate: expense.paidDate,
+				paidByUserId: expense.paidByUserId,
+				paidContainerId: expense.paidContainerId
+			},
+			newValueJson: { status: 'unpaid' },
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return { reopenExpenseSuccess: true, reopenExpenseId: expenseId };
 	},
 
 	addCategory: async ({ request, locals, getClientAddress }) => {

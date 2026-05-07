@@ -112,6 +112,9 @@
 		if ((form as any)?.markPaidSuccess) {
 			markingPaidExpenseId = null;
 		}
+		if ((form as any)?.reopenExpenseSuccess) {
+			// nothing to reset — card refreshes automatically
+		}
 		if ((form as any)?.addCategorySuccess) {
 			showAddCategoryForm = false;
 		}
@@ -222,6 +225,12 @@
 	{/if}
 	{#if (form as any)?.markPaidSuccess}
 		<div class="alert success">Разходът е маркиран като платен.</div>
+	{/if}
+	{#if (form as any)?.reopenExpenseError}
+		<div class="alert error">{(form as any).reopenExpenseError}</div>
+	{/if}
+	{#if (form as any)?.reopenExpenseSuccess}
+		<div class="alert success">Разходът е върнат като неплатен и плащането е анулирано.</div>
 	{/if}
 
 	<div class="section-actions">
@@ -379,6 +388,12 @@
 											от {expense.paidByUser.firstName} {expense.paidByUser.lastName}
 										{/if}
 									</span>
+									{#if expense.paidContainer}
+										<span class="detail-item">
+											<span class="detail-label">Сметка:</span>
+											{expense.paidContainer.name}
+										</span>
+									{/if}
 								{/if}
 							</div>
 						</div>
@@ -403,6 +418,17 @@
 										{markingPaidExpenseId === expense.id ? 'Отказ' : 'Маркирай като платен'}
 									</button>
 								{/if}
+							{:else if expense.status === 'paid' && data.permissions.canMarkPaid}
+								<form
+									method="POST"
+									action="?/reopenExpense"
+									onsubmit={(e) => {
+										if (!confirm('Сигурни ли сте? Плащането ще бъде анулирано и разходът ще стане неплатен.')) e.preventDefault();
+									}}
+								>
+									<input type="hidden" name="expenseId" value={expense.id} />
+									<button type="submit" class="btn-warning btn-sm">Върни като неплатен</button>
+								</form>
 							{/if}
 						</div>
 					</div>
@@ -515,9 +541,22 @@
 						<div class="mark-paid-form">
 							<form method="POST" action="?/markPaid">
 								<input type="hidden" name="expenseId" value={expense.id} />
-								<div class="field">
-									<label for={'paid-date-' + expense.id}>Дата на плащане</label>
-									<input id={'paid-date-' + expense.id} name="paidDate" type="date" required />
+								<div class="grid two">
+									<div class="field">
+										<label for={'paid-date-' + expense.id}>Дата на плащане</label>
+										<input id={'paid-date-' + expense.id} name="paidDate" type="date" required />
+									</div>
+									<div class="field">
+										<label for={'paid-container-' + expense.id}>Платено от сметка</label>
+										<select id={'paid-container-' + expense.id} name="containerId" required>
+											<option value="">-- Изберете сметка --</option>
+											{#each data.moneyContainers as container}
+												<option value={container.id}>
+													{container.name}
+												</option>
+											{/each}
+										</select>
+									</div>
 								</div>
 								<div class="form-actions">
 									<button type="submit" class="btn-success">Потвърди плащане</button>
@@ -1271,6 +1310,22 @@
 
 	.btn-danger:hover {
 		background: #fecaca;
+	}
+
+	.btn-warning {
+		background: #fef3c7;
+		color: #92400e;
+		border: none;
+		border-radius: 8px;
+		padding: 10px 16px;
+		font: inherit;
+		font-weight: 600;
+		cursor: pointer;
+		align-self: flex-start;
+	}
+
+	.btn-warning:hover {
+		background: #fde68a;
 	}
 
 	.btn-sm {

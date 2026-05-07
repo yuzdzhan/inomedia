@@ -39,6 +39,43 @@ export async function createInvoicePaymentLedgerEntry(
 }
 
 /**
+ * Creates a LedgerEntry linked to an Expense payment.
+ * amountCents should be the positive expense amount — this function stores it as negative (debit).
+ * Call this inside a transaction after updating the Expense record.
+ * Silently skips if the container is not found.
+ */
+export async function createExpensePaymentLedgerEntry(
+	tx: Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>,
+	expenseId: string,
+	containerId: string,
+	amountCents: number,
+	paidDate: Date,
+	description: string,
+	userId: string
+): Promise<void> {
+	const container = await tx.moneyContainer.findUnique({
+		where: { id: containerId },
+		select: { id: true }
+	});
+
+	if (!container) {
+		return;
+	}
+
+	await tx.ledgerEntry.create({
+		data: {
+			containerId,
+			entryType: 'expense_payment',
+			amountCents: -Math.abs(amountCents), // always negative (debit)
+			entryDate: paidDate,
+			description: `Разход: ${description}`,
+			expenseId,
+			createdByUserId: userId
+		}
+	});
+}
+
+/**
  * Returns or creates both money containers for the given company.
  * Should be called from page load functions.
  */
