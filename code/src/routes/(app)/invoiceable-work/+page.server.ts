@@ -1,12 +1,15 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
+import {
+	buildDraftSelectionSnapshot,
+	centsFromMinutes,
+	formatDateInput,
+	resolveDraftDueDate,
+	summarizeDraftSelections
+} from '$lib/server/invoice-drafts';
 import { canViewProjectFinancials } from '$lib/server/project-policy';
 import type { Actions, PageServerLoad } from './$types';
-
-function formatDateInput(date: Date) {
-	return date.toISOString().slice(0, 10);
-}
 
 function normalizeBillingType(value: string | null) {
 	if (value === 'hourly' || value === 'flat_fee') {
@@ -14,14 +17,6 @@ function normalizeBillingType(value: string | null) {
 	}
 
 	return 'all';
-}
-
-function centsFromMinutes(rateCents: number | null, minutes: number) {
-	if (rateCents == null) {
-		return 0;
-	}
-
-	return Math.round((rateCents * minutes) / 60);
 }
 
 function canAccessInvoiceDrafting(role: string) {
@@ -380,81 +375,30 @@ export const actions: Actions = {
 			});
 		}
 
-		const selectionSnapshots = tasks.map((task) => {
-			if (task.billingType === 'hourly') {
-				const amountCents = task.timeLogs.reduce(
-					(sum, log) => sum + centsFromMinutes(log.snapshotBillableRateCents, log.durationMinutes),
-					0
-				);
-
-				return {
-					taskId: task.id,
-					billingType: task.billingType,
-					amountCents,
-					hourlyUninvoicedValueCents: amountCents,
-					flatFeeValueCents: null,
-					firstWorkDate: task.timeLogs[0]?.workDate ?? null,
-					lastWorkDate: task.timeLogs.at(-1)?.workDate ?? null,
-					snapshotJson: {
-						taskTitle: task.title,
-						projectId: task.taskList.project.id,
-						projectName: task.taskList.project.name,
-						clientId,
-						timeLogs: task.timeLogs.map((log) => ({
-							id: log.id,
-							workDate: formatDateInput(log.workDate),
-							description: log.description,
-							durationMinutes: log.durationMinutes,
-							startMinuteOfDay: log.startMinuteOfDay,
-							endMinuteOfDay: log.endMinuteOfDay,
-							snapshotCostRateCents: log.snapshotCostRateCents,
-							snapshotBillableRateCents: log.snapshotBillableRateCents,
-							userId: log.userId
-						}))
-					}
-				};
-			}
-
-			return {
-				taskId: task.id,
-				billingType: task.billingType,
-				amountCents: task.flatFeeAmountCents ?? 0,
-				hourlyUninvoicedValueCents: null,
-				flatFeeValueCents: task.flatFeeAmountCents ?? 0,
-				firstWorkDate: null,
-				lastWorkDate: null,
-				snapshotJson: {
-					taskTitle: task.title,
-					projectId: task.taskList.project.id,
-					projectName: task.taskList.project.name,
-					clientId,
-					flatFeeAmountCents: task.flatFeeAmountCents ?? 0
-				}
-			};
-		});
-
-		const allDates = selectionSnapshots
-			.flatMap((selection) => [selection.firstWorkDate, selection.lastWorkDate])
-			.filter((date): date is Date => date instanceof Date);
-		const servicePeriodFrom = allDates.length > 0 ? allDates.reduce((min, date) => (date < min ? date : min)) : null;
-		const servicePeriodTo = allDates.length > 0 ? allDates.reduce((max, date) => (date > max ? date : max)) : null;
-		const netTotalCents = selectionSnapshots.reduce((sum, selection) => sum + selection.amountCents, 0);
-		const vatTotalCents = Math.round((netTotalCents * context.company.vatRateBasisPoints) / 10000);
-		const grossTotalCents = netTotalCents + vatTotalCents;
+		const selectionSnapshots = tasks.map((task) => buildDraftSelectionSnapshot(task, clientId));
+		const totals = summarizeDraftSelections(selectionSnapshots, context.company.vatRateBasisPoints);
+		const clientDefaultPaymentTermDays =
+			context.clients.find((client) => client.id === clientId)?.defaultPaymentTermDays ?? null;
 
 		const invoice = await db.invoice.create({
 			data: {
 				clientId,
 				createdByUserId: user.id,
 				vatRateBasisPoints: context.company.vatRateBasisPoints,
-				netTotalCents,
-				vatTotalCents,
-				grossTotalCents,
-				servicePeriodFrom,
-				servicePeriodTo,
+				netTotalCents: totals.netTotalCents,
+				vatTotalCents: totals.vatTotalCents,
+				grossTotalCents: totals.grossTotalCents,
+				servicePeriodFrom: totals.servicePeriodFrom,
+				servicePeriodTo: totals.servicePeriodTo,
+				dueDate: resolveDraftDueDate(
+					null,
+					clientDefaultPaymentTermDays,
+					context.company.defaultPaymentTermDays
+				),
 				taskSelections: {
 					create: selectionSnapshots.map((selection) => ({
 						taskId: selection.taskId,
+						description: selection.description,
 						hourlyUninvoicedValueCents: selection.hourlyUninvoicedValueCents,
 						flatFeeValueCents: selection.flatFeeValueCents,
 						snapshotJson: selection.snapshotJson
@@ -474,9 +418,9 @@ export const actions: Actions = {
 			newValueJson: {
 				clientId,
 				taskIds: selectedTaskIds,
-				netTotalCents,
-				vatTotalCents,
-				grossTotalCents
+				netTotalCents: totals.netTotalCents,
+				vatTotalCents: totals.vatTotalCents,
+				grossTotalCents: totals.grossTotalCents
 			},
 			ipAddress: getClientAddress(),
 			userAgent: request.headers.get('user-agent') ?? undefined

@@ -416,6 +416,7 @@ model InvoiceTaskSelection {
   invoice                      Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   taskId                       String
   task                         Task     @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  description                  String
   snapshotTakenAt              DateTime @default(now())
   hourlyUninvoicedValueCents   Int?
   flatFeeValueCents            Int?
