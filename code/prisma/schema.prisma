@@ -44,6 +44,8 @@ model User {
   createdExpenses Expense[] @relation("ExpenseCreatedBy")
   paidExpenses    Expense[] @relation("ExpensePaidBy")
   createdRecurringTemplates RecurringExpenseTemplate[] @relation("RecurringTemplateCreatedBy")
+  ledgerEntries   LedgerEntry[]    @relation("LedgerEntryCreatedBy")
+  standaloneIncomes StandaloneIncome[] @relation("StandaloneIncomeCreatedBy")
 
   @@map("user")
 }
@@ -115,6 +117,8 @@ model Company {
   expenses               Expense[]
   recurringTemplates     RecurringExpenseTemplate[]
   ownedTaskAttachments   TaskAttachment[] @relation("TaskAttachmentOwnerCompany")
+  moneyContainers        MoneyContainer[]
+  standaloneIncomes      StandaloneIncome[]
 }
 
 model AuditEvent {
@@ -201,6 +205,79 @@ enum PaymentMethod {
 enum RecurringFrequency {
   monthly
   yearly
+}
+
+enum MoneyContainerType {
+  bank
+  cashbox
+}
+
+enum LedgerEntryType {
+  invoice_payment
+  standalone_income
+  expense_payment
+  generic_credit
+  generic_debit
+  transfer_out
+  transfer_in
+}
+
+model MoneyContainer {
+  id                  String              @id @default(cuid())
+  companyId           String
+  company             Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  containerType       MoneyContainerType
+  name                String
+  openingBalanceCents Int                 @default(0)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  ledgerEntries       LedgerEntry[]
+  standaloneIncomes   StandaloneIncome[]
+
+  @@unique([companyId, containerType])
+  @@map("money_container")
+}
+
+model LedgerEntry {
+  id                  String            @id @default(cuid())
+  containerId         String
+  container           MoneyContainer    @relation(fields: [containerId], references: [id], onDelete: Restrict)
+  entryType           LedgerEntryType
+  amountCents         Int
+  entryDate           DateTime          @db.Date
+  description         String
+  invoicePaymentId    String?           @unique
+  invoicePayment      InvoicePayment?   @relation(fields: [invoicePaymentId], references: [id], onDelete: SetNull)
+  standaloneIncomeId  String?           @unique
+  standaloneIncome    StandaloneIncome? @relation(fields: [standaloneIncomeId], references: [id], onDelete: SetNull)
+  transferPairId      String?
+  createdByUserId     String
+  createdByUser       User              @relation("LedgerEntryCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdAt           DateTime          @default(now())
+
+  @@index([containerId, entryDate])
+  @@index([transferPairId])
+  @@map("ledger_entry")
+}
+
+model StandaloneIncome {
+  id                  String         @id @default(cuid())
+  companyId           String
+  company             Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  containerId         String
+  container           MoneyContainer @relation(fields: [containerId], references: [id], onDelete: Restrict)
+  description         String
+  amountCents         Int
+  incomeDate          DateTime       @db.Date
+  notes               String?
+  createdByUserId     String
+  createdByUser       User           @relation("StandaloneIncomeCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  ledgerEntry         LedgerEntry?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  @@index([companyId, incomeDate])
+  @@map("standalone_income")
 }
 
 model Client {
@@ -444,6 +521,7 @@ model InvoicePayment {
   notes            String?
   recordedByUserId String
   recordedByUser   User          @relation("InvoicePaymentRecordedBy", fields: [recordedByUserId], references: [id], onDelete: Restrict)
+  ledgerEntry      LedgerEntry?
   createdAt        DateTime      @default(now())
 
   @@index([invoiceId, paymentDate])

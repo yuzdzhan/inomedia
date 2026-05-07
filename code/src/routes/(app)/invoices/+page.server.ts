@@ -2,6 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import { Prisma } from '@prisma/client';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
+import { createInvoicePaymentLedgerEntry } from '$lib/server/ledger';
 import { generateInvoicePdf, type InvoicePdfSnapshot } from '$lib/server/invoice-pdf';
 import {
 	buildDefaultInvoiceLineDescription,
@@ -678,15 +679,25 @@ export const actions: Actions = {
 
 		const invoice = await db.invoice.findFirst({
 			where: { id: invoiceId, status: { in: ['issued', 'partially_paid'] } },
-			select: { id: true, grossTotalCents: true, paidTotalCents: true, status: true }
+			select: { id: true, grossTotalCents: true, paidTotalCents: true, status: true, invoiceNumber: true }
 		});
 
 		if (!invoice) {
 			return fail(404, { paymentError: 'Фактурата не е намерена или не може да получава плащания.', paymentInvoiceId: invoiceId });
 		}
 
+		// Determine which container to credit based on payment method
+		const containerType = paymentMethod === 'bank_transfer' ? 'bank' : 'cashbox';
+		const company = await db.company.findFirst({ select: { id: true } });
+		const container = company
+			? await db.moneyContainer.findUnique({
+					where: { companyId_containerType: { companyId: company.id, containerType } },
+					select: { id: true }
+				})
+			: null;
+
 		await db.$transaction(async (tx) => {
-			await tx.invoicePayment.create({
+			const payment = await tx.invoicePayment.create({
 				data: {
 					invoiceId: invoice.id,
 					amountCents,
@@ -708,6 +719,18 @@ export const actions: Actions = {
 					lastUpdatedAt: new Date()
 				}
 			});
+
+			if (container) {
+				await createInvoicePaymentLedgerEntry(
+					tx,
+					payment.id,
+					container.id,
+					amountCents,
+					paymentDate,
+					invoice.invoiceNumber ?? invoiceId,
+					locals.user!.id
+				);
+			}
 		});
 
 		await logAuditEvent({
