@@ -44,6 +44,9 @@
 				<li><a href="/settings" aria-current={page.url.pathname === '/settings' ? 'page' : undefined}>Настройки</a></li>
 				<li><a href="/users" aria-current={page.url.pathname === '/users' ? 'page' : undefined}>Потребители</a></li>
 			{/if}
+			{#if ['admin', 'accountant'].includes(data.user.role)}
+				<li><a href="/audit" aria-current={page.url.pathname.startsWith('/audit') ? 'page' : undefined}>Одитен журнал</a></li>
+			{/if}
 		</ul>
 
 		<div class="user-block">
