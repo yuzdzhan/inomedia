@@ -12,6 +12,7 @@ export { formatMoneyFromCents, parseOptionalMoneyToCents };
 
 const TASK_COMMENT_AUTHOR_ROLES = ['admin', 'manager', 'employee'] as const;
 const TASK_COMMENT_DELETE_ROLES = ['admin', 'manager'] as const;
+const TASK_TIME_LOG_AUTHOR_ROLES = ['employee'] as const;
 
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
 	todo: 'За изпълнение',
@@ -46,6 +47,10 @@ export function canCreateTaskComments(role: string) {
 
 export function canSoftDeleteTaskComments(role: string) {
 	return TASK_COMMENT_DELETE_ROLES.includes(role as (typeof TASK_COMMENT_DELETE_ROLES)[number]);
+}
+
+export function canCreateTaskTimeLogs(role: string) {
+	return TASK_TIME_LOG_AUTHOR_ROLES.includes(role as (typeof TASK_TIME_LOG_AUTHOR_ROLES)[number]);
 }
 
 export { canViewProjectFinancials };
@@ -87,4 +92,8 @@ export function formatDateForInput(value: Date | string | null | undefined) {
 
 	const date = value instanceof Date ? value : new Date(value);
 	return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
+}
+
+export function normalizeTaskTimeLogDescription(value: string) {
+	return normalizeOptionalProjectDescription(value);
 }

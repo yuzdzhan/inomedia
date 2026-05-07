@@ -36,6 +36,7 @@ model User {
   deletedTaskComments TaskComment[] @relation("TaskCommentDeletedBy")
   taskAssignments TaskAssignment[]
   uploadedTaskAttachments TaskAttachment[] @relation("TaskAttachmentUploader")
+  taskTimeLogs    TaskTimeLog[]
 
   @@map("user")
 }
@@ -269,6 +270,7 @@ model Task {
   assignees          TaskAssignment[]
   comments           TaskComment[]
   attachments        TaskAttachment[]
+  timeLogs           TaskTimeLog[]
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
 
@@ -332,6 +334,25 @@ model TaskAttachment {
   @@index([taskCommentId, createdAt])
   @@index([uploadedByUserId])
   @@map("task_attachment")
+}
+
+model TaskTimeLog {
+  id               String   @id @default(cuid())
+  taskId           String
+  task             Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workDate         DateTime @db.Date
+  description      String
+  durationMinutes  Int
+  startMinuteOfDay Int?
+  endMinuteOfDay   Int?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([taskId, workDate])
+  @@index([userId, workDate])
+  @@map("task_time_log")
 }
 
 model ExpenseCategory {

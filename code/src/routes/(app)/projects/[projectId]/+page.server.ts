@@ -9,12 +9,14 @@ import { canCreateOrManageProjects, canViewProjectFinancials } from '$lib/server
 import {
 	canAccessProjectTasks,
 	canCreateTaskComments,
+	canCreateTaskTimeLogs,
 	canManageProjectTasks,
 	canSoftDeleteTaskComments,
 	formatDateForInput,
 	normalizeTaskCommentBody,
 	normalizeOptionalTaskDescription,
 	normalizeTaskListName,
+	normalizeTaskTimeLogDescription,
 	normalizeTaskTitle,
 	parseOptionalDateInput,
 	parseOptionalMoneyToCents
@@ -53,6 +55,22 @@ const taskCommentSchema = z.object({
 	projectId: z.string().trim().min(1),
 	taskId: z.string().trim().min(1),
 	body: z.string().trim().min(1, 'Въведете коментар.').max(4000, 'Коментарът е твърде дълъг.')
+});
+
+const taskTimeLogSchema = z.object({
+	projectId: z.string().trim().min(1),
+	taskId: z.string().trim().min(1),
+	workDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Използвайте валидна дата.'),
+	description: z.string().trim().min(1, 'Въведете описание на извършената работа.').max(4000, 'Описанието е твърде дълго.'),
+	durationMinutes: z
+		.string()
+		.trim()
+		.regex(/^\d+$/, 'Използвайте продължителност в минути.')
+		.transform((value) => Number.parseInt(value, 10))
+		.refine((value) => value > 0, 'Продължителността трябва да е по-голяма от 0.')
+		.refine((value) => value % 15 === 0, 'Продължителността трябва да се дели на 15.'),
+	startTime: z.union([z.literal(''), z.string().regex(/^\d{2}:\d{2}$/, 'Използвайте час във формат ЧЧ:ММ.')]),
+	endTime: z.union([z.literal(''), z.string().regex(/^\d{2}:\d{2}$/, 'Използвайте час във формат ЧЧ:ММ.')])
 });
 
 const CLOSED_TASK_STATUSES: TaskStatus[] = ['done', 'cancelled'];
@@ -97,6 +115,18 @@ function buildTaskCommentInput(formData: FormData) {
 	};
 }
 
+function buildTaskTimeLogInput(formData: FormData) {
+	return {
+		projectId: String(formData.get('projectId') ?? ''),
+		taskId: String(formData.get('taskId') ?? ''),
+		workDate: String(formData.get('workDate') ?? ''),
+		description: String(formData.get('description') ?? ''),
+		durationMinutes: String(formData.get('durationMinutes') ?? ''),
+		startTime: String(formData.get('startTime') ?? ''),
+		endTime: String(formData.get('endTime') ?? '')
+	};
+}
+
 function buildAttachmentErrorMap(errors: string[]) {
 	return errors.length > 0 ? { attachments: errors } : null;
 }
@@ -133,6 +163,41 @@ function normalizeTaskCommentPayload(data: z.infer<typeof taskCommentSchema>) {
 	};
 }
 
+function parseTimeToMinutes(value: string) {
+	if (!value) {
+		return null;
+	}
+
+	const [hoursRaw, minutesRaw] = value.split(':');
+	const hours = Number.parseInt(hoursRaw ?? '', 10);
+	const minutes = Number.parseInt(minutesRaw ?? '', 10);
+
+	if (
+		Number.isNaN(hours) ||
+		Number.isNaN(minutes) ||
+		hours < 0 ||
+		hours > 23 ||
+		minutes < 0 ||
+		minutes > 59
+	) {
+		return Number.NaN;
+	}
+
+	return hours * 60 + minutes;
+}
+
+function normalizeTaskTimeLogPayload(data: z.infer<typeof taskTimeLogSchema>) {
+	return {
+		projectId: data.projectId,
+		taskId: data.taskId,
+		workDate: parseOptionalDateInput(data.workDate),
+		description: normalizeTaskTimeLogDescription(data.description) ?? '',
+		durationMinutes: data.durationMinutes,
+		startMinuteOfDay: parseTimeToMinutes(data.startTime),
+		endMinuteOfDay: parseTimeToMinutes(data.endTime)
+	};
+}
+
 function normalizeTaskBillingForPersistence(input: ReturnType<typeof normalizeTaskPayload>) {
 	if (input.billingType === 'flat_fee') {
 		return input;
@@ -152,6 +217,15 @@ async function getCompanyOrRedirect() {
 
 	await ensureCompanyDefaults(db, company.id);
 	return company;
+}
+
+function formatDateInTimezone(date: Date, timezone: string) {
+	return new Intl.DateTimeFormat('en-CA', {
+		timeZone: timezone,
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit'
+	}).format(date);
 }
 
 async function getScopedProject(companyId: string, projectId: string) {
@@ -259,6 +333,18 @@ async function getScopedProject(companyId: string, projectId: string) {
 										}
 									}
 								}
+							},
+							timeLogs: {
+								orderBy: [{ workDate: 'desc' }, { createdAt: 'desc' }],
+								include: {
+									user: {
+										select: {
+											id: true,
+											firstName: true,
+											lastName: true
+										}
+									}
+								}
 							}
 						},
 						orderBy: [{ deadlineDate: 'asc' }, { updatedAt: 'desc' }, { title: 'asc' }]
@@ -346,6 +432,47 @@ function canUserReachTask(
 	return task.assignees.some((assignee) => assignee.userId === user.id);
 }
 
+function validateTaskTimeLog(
+	input: ReturnType<typeof normalizeTaskTimeLogPayload>,
+	timezone: string
+) {
+	if (!(input.workDate instanceof Date) || Number.isNaN(input.workDate.getTime())) {
+		return { field: 'workDate', message: 'Използвайте валидна дата.' };
+	}
+
+	const today = formatDateInTimezone(new Date(), timezone);
+	const workDate = formatDateForInput(input.workDate);
+	if (workDate > today) {
+		return { field: 'workDate', message: 'Бъдещи дати не са позволени.' };
+	}
+
+	const hasStart = input.startMinuteOfDay != null;
+	const hasEnd = input.endMinuteOfDay != null;
+	if (hasStart !== hasEnd) {
+		return { field: 'startTime', message: 'Въведете и начален, и краен час.' };
+	}
+
+	if (input.startMinuteOfDay != null && Number.isNaN(input.startMinuteOfDay)) {
+		return { field: 'startTime', message: 'Използвайте валиден начален час.' };
+	}
+
+	if (input.endMinuteOfDay != null && Number.isNaN(input.endMinuteOfDay)) {
+		return { field: 'endTime', message: 'Използвайте валиден краен час.' };
+	}
+
+	if (input.startMinuteOfDay != null && input.endMinuteOfDay != null) {
+		if (input.endMinuteOfDay <= input.startMinuteOfDay) {
+			return { field: 'endTime', message: 'Крайният час трябва да е след началния.' };
+		}
+
+		if (input.endMinuteOfDay - input.startMinuteOfDay !== input.durationMinutes) {
+			return { field: 'durationMinutes', message: 'Продължителността трябва да съвпада с часовия диапазон.' };
+		}
+	}
+
+	return null;
+}
+
 export const load: PageServerLoad = async ({ params, parent, url }) => {
 	const { user } = await parent();
 	if (!canAccessProjectTasks(user.role)) {
@@ -367,7 +494,8 @@ export const load: PageServerLoad = async ({ params, parent, url }) => {
 	}
 
 	return {
-		company: { currency: company.currency },
+		company: { currency: company.currency, timezone: company.timezone },
+		today: formatDateInTimezone(new Date(), company.timezone),
 		project: {
 			...project,
 			taskLists: project.taskLists.map((taskList) => {
@@ -394,6 +522,7 @@ export const load: PageServerLoad = async ({ params, parent, url }) => {
 			canManageTasks: canManageProjectTasks(user.role),
 			canManageProjects: canCreateOrManageProjects(user.role),
 			canCreateComments: canCreateTaskComments(user.role),
+			canCreateTimeLogs: canCreateTaskTimeLogs(user.role),
 			canSoftDeleteComments: canSoftDeleteTaskComments(user.role),
 			canViewFinancials: canViewProjectFinancials(user.role),
 			isEmployeeView
@@ -1005,6 +1134,112 @@ export const actions: Actions = {
 			commentFormTaskId: comment.taskId,
 			commentFormCommentId: comment.id
 		};
+	},
+
+	createTimeLog: async ({ request, locals, getClientAddress }) => {
+		if (!locals.user || !canCreateTaskTimeLogs(locals.user.role)) {
+			return fail(403, { timeLogFormError: 'Нямате права за тази операция.' });
+		}
+
+		const user = locals.user;
+		const company = await getCompanyOrRedirect();
+		const formData = await request.formData();
+		const raw = buildTaskTimeLogInput(formData);
+		const parsed = taskTimeLogSchema.safeParse(raw);
+
+		if (!parsed.success) {
+			return fail(422, {
+				timeLogFormErrors: parsed.error.flatten().fieldErrors,
+				timeLogFormValues: raw,
+				timeLogFormTaskId: raw.taskId
+			});
+		}
+
+		const data = normalizeTaskTimeLogPayload(parsed.data);
+		const validation = validateTaskTimeLog(data, company.timezone);
+		if (validation) {
+			return fail(422, {
+				timeLogFormErrors: { [validation.field]: [validation.message] },
+				timeLogFormValues: raw,
+				timeLogFormTaskId: raw.taskId
+			});
+		}
+
+		const workDate = data.workDate;
+		if (!workDate) {
+			return fail(422, {
+				timeLogFormErrors: { workDate: ['Използвайте валидна дата.'] },
+				timeLogFormValues: raw,
+				timeLogFormTaskId: raw.taskId
+			});
+		}
+
+		const project = await getScopedProject(company.id, data.projectId);
+		if (!project) {
+			return fail(404, { timeLogFormError: 'Проектът не е намерен.', timeLogFormTaskId: raw.taskId });
+		}
+
+		const task = findProjectTask(project, data.taskId);
+		if (!task) {
+			return fail(404, { timeLogFormError: 'Задачата не е намерена.', timeLogFormTaskId: raw.taskId });
+		}
+
+		if (!task.assignees.some((assignee) => assignee.userId === user.id)) {
+			return fail(403, {
+				timeLogFormError: 'Можете да отчитате време само по възложени на вас задачи.',
+				timeLogFormTaskId: task.id
+			});
+		}
+
+		if (data.startMinuteOfDay != null && data.endMinuteOfDay != null) {
+			const overlappingLog = await db.taskTimeLog.findFirst({
+				where: {
+					userId: user.id,
+					workDate,
+					startMinuteOfDay: { not: null, lt: data.endMinuteOfDay },
+					endMinuteOfDay: { not: null, gt: data.startMinuteOfDay }
+				},
+				select: { id: true }
+			});
+
+			if (overlappingLog) {
+				return fail(409, {
+					timeLogFormErrors: { startTime: ['Има друго засичане за този ден и часови диапазон.'] },
+					timeLogFormValues: raw,
+					timeLogFormTaskId: task.id
+				});
+			}
+		}
+
+		const timeLog = await db.taskTimeLog.create({
+			data: {
+				taskId: task.id,
+				userId: user.id,
+				workDate,
+				description: data.description,
+				durationMinutes: data.durationMinutes,
+				startMinuteOfDay: data.startMinuteOfDay,
+				endMinuteOfDay: data.endMinuteOfDay
+			}
+		});
+
+		await logAuditEvent({
+			actorUserId: user.id,
+			eventType: 'task_time_log_created',
+			entityType: 'task_time_log',
+			entityId: timeLog.id,
+			newValueJson: {
+				taskId: task.id,
+				workDate: formatDateForInput(timeLog.workDate),
+				durationMinutes: timeLog.durationMinutes,
+				startMinuteOfDay: timeLog.startMinuteOfDay,
+				endMinuteOfDay: timeLog.endMinuteOfDay
+			},
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return { timeLogFormSuccess: true, timeLogFormTaskId: task.id };
 	},
 
 	deleteComment: async ({ request, locals, getClientAddress }) => {

@@ -39,6 +39,16 @@
 		createdAt: string | Date;
 		uploadedByUser: { firstName: string; lastName: string };
 	};
+	type TimeLogView = {
+		id: string;
+		workDate: string | Date;
+		description: string;
+		durationMinutes: number;
+		startMinuteOfDay: number | null;
+		endMinuteOfDay: number | null;
+		createdAt: string | Date;
+		user: { id: string; firstName: string; lastName: string };
+	};
 
 	let searchQuery = $state('');
 	let createTaskListOpen = $state(false);
@@ -179,6 +189,14 @@
 		return commentFieldError('attachments');
 	}
 
+	function timeLogFieldError(field: string) {
+		return (form as any)?.timeLogFormErrors?.[field]?.[0];
+	}
+
+	function timeLogFieldValue(field: string, fallback = '') {
+		return (form as any)?.timeLogFormValues?.[field] ?? fallback;
+	}
+
 	function taskBillingTypeValue(task: { billingType: string }) {
 		return taskFieldValue('billingType', task.billingType) as TaskBillingTypeValue;
 	}
@@ -253,6 +271,10 @@
 		return data.permissions.canSoftDeleteComments && !comment.isDeleted;
 	}
 
+	function canCreateTimeLog(task: { assignees: Array<{ userId: string }> }) {
+		return data.permissions.canCreateTimeLogs && task.assignees.some((assignee) => assignee.userId === data.permissions.currentUserId);
+	}
+
 	function assigneeNames(
 		task: {
 			assignees: Array<{
@@ -265,6 +287,31 @@
 		}
 
 		return task.assignees.map((assignee) => userLabel(assignee.user)).join(', ');
+	}
+
+	function formatMinutes(value: number) {
+		const hours = Math.floor(value / 60);
+		const minutes = value % 60;
+		return `${hours}ч ${minutes.toString().padStart(2, '0')}м`;
+	}
+
+	function formatShortDate(value: string) {
+		return new Intl.DateTimeFormat('bg-BG', {
+			day: '2-digit',
+			month: 'short',
+			year: 'numeric',
+			timeZone: 'UTC'
+		}).format(new Date(`${value}T00:00:00.000Z`));
+	}
+
+	function formatMinuteOfDay(value: number | null) {
+		if (value == null) {
+			return '';
+		}
+
+		const hours = Math.floor(value / 60);
+		const minutes = value % 60;
+		return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
 	}
 
 	const filteredTaskLists = $derived.by(() => {
@@ -897,6 +944,102 @@
 					</div>
 				</div>
 			{/if}
+			<section class="comments-panel">
+				<div class="comments-header">
+					<div>
+						<div class="eyebrow">Отчетено време</div>
+						<h3>Работа по задачата</h3>
+					</div>
+					<span class="meta-chip">{task.timeLogs.length} записа</span>
+				</div>
+
+				{#if (form as any)?.timeLogFormError}
+					<div class="alert error">{(form as any).timeLogFormError}</div>
+				{/if}
+				{#if (form as any)?.timeLogFormSuccess}
+					<div class="alert success">Времето е отчетено.</div>
+				{/if}
+
+				{#if canCreateTimeLog(task)}
+					<form method="POST" action="?/createTimeLog" class="time-log-form">
+						<input type="hidden" name="projectId" value={data.project.id} />
+						<input type="hidden" name="taskId" value={task.id} />
+						<div class="grid two">
+							<div class="field">
+								<label for={'timelog-date-' + task.id}>Дата</label>
+								<input
+									id={'timelog-date-' + task.id}
+									name="workDate"
+									type="date"
+									max={data.today}
+									value={timeLogFieldValue('workDate', data.today)}
+								/>
+								{#if timeLogFieldError('workDate')}<span class="error-text">{timeLogFieldError('workDate')}</span>{/if}
+							</div>
+							<div class="field">
+								<label for={'timelog-duration-' + task.id}>Минути</label>
+								<input
+									id={'timelog-duration-' + task.id}
+									name="durationMinutes"
+									type="number"
+									min="15"
+									step="15"
+									value={timeLogFieldValue('durationMinutes')}
+								/>
+								{#if timeLogFieldError('durationMinutes')}<span class="error-text">{timeLogFieldError('durationMinutes')}</span>{/if}
+							</div>
+							<div class="field">
+								<label for={'timelog-start-' + task.id}>Начало</label>
+								<input id={'timelog-start-' + task.id} name="startTime" type="time" value={timeLogFieldValue('startTime')} />
+								{#if timeLogFieldError('startTime')}<span class="error-text">{timeLogFieldError('startTime')}</span>{/if}
+							</div>
+							<div class="field">
+								<label for={'timelog-end-' + task.id}>Край</label>
+								<input id={'timelog-end-' + task.id} name="endTime" type="time" value={timeLogFieldValue('endTime')} />
+								{#if timeLogFieldError('endTime')}<span class="error-text">{timeLogFieldError('endTime')}</span>{/if}
+							</div>
+						</div>
+						<div class="field">
+							<label for={'timelog-description-' + task.id}>Какво беше свършено</label>
+							<textarea
+								id={'timelog-description-' + task.id}
+								name="description"
+								rows="3"
+								placeholder="Кратко описание на извършената работа"
+							>{timeLogFieldValue('description')}</textarea>
+							{#if timeLogFieldError('description')}<span class="error-text">{timeLogFieldError('description')}</span>{/if}
+						</div>
+						<div class="comment-actions">
+							<button type="submit" class="btn-primary">Добави отчет</button>
+						</div>
+					</form>
+				{/if}
+
+				<div class="comment-list">
+					{#if task.timeLogs.length === 0}
+						<p class="empty-state">Все още няма отчетено време по тази задача.</p>
+					{:else}
+						{#each task.timeLogs as timeLog}
+							<article class="comment-card">
+								<div class="comment-meta">
+									<div>
+										<strong>{userLabel(timeLog.user)}</strong>
+										<span class="comment-time">{formatShortDate(timeLog.workDate.toString())}</span>
+										<span class="comment-badge">{formatMinutes(timeLog.durationMinutes)}</span>
+										{#if timeLog.startMinuteOfDay != null && timeLog.endMinuteOfDay != null}
+											<span class="comment-badge muted">
+												{formatMinuteOfDay(timeLog.startMinuteOfDay)} - {formatMinuteOfDay(timeLog.endMinuteOfDay)}
+											</span>
+										{/if}
+									</div>
+								</div>
+								<div class="comment-body">{timeLog.description}</div>
+							</article>
+						{/each}
+					{/if}
+				</div>
+			</section>
+
 			<section class="comments-panel">
 				<div class="comments-header">
 					<div>
@@ -1609,7 +1752,8 @@
 	}
 
 	.comment-composer,
-	.comment-editor {
+	.comment-editor,
+	.time-log-form {
 		display: grid;
 		gap: 10px;
 	}
