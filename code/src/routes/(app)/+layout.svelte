@@ -23,6 +23,9 @@
 				<li><a href="/clients" aria-current={page.url.pathname === '/clients' ? 'page' : undefined}>Клиенти</a></li>
 				<li><a href="/projects" aria-current={page.url.pathname === '/projects' ? 'page' : undefined}>Проекти</a></li>
 			{/if}
+			{#if ['admin', 'manager', 'accountant'].includes(data.user.role)}
+				<li><a href="/invoiceable-work" aria-current={page.url.pathname === '/invoiceable-work' ? 'page' : undefined}>За фактуриране</a></li>
+			{/if}
 			{#if data.user.role === 'admin'}
 				<li><a href="/settings" aria-current={page.url.pathname === '/settings' ? 'page' : undefined}>Настройки</a></li>
 				<li><a href="/users" aria-current={page.url.pathname === '/users' ? 'page' : undefined}>Потребители</a></li>
@@ -128,4 +131,3 @@
 		overflow-y: auto;
 	}
 </style>
-
