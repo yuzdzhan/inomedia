@@ -27,6 +27,15 @@ const companySettingsSchema = z.object({
 	vatRegistered: z.boolean()
 });
 
+const companyContactSchema = z.object({
+	email: z.string().trim().email('Въведете валиден имейл.').optional().or(z.literal('')),
+	phone: z.string().trim().max(32).optional(),
+	website: z.string().trim().max(120).optional(),
+	bankName: z.string().trim().max(120).optional(),
+	bankIban: z.string().trim().max(34).optional(),
+	bankBic: z.string().trim().max(11).optional()
+});
+
 const expenseCategorySchema = z.object({
 	name: z.string().trim().min(2, 'Въведете име на категория.').max(80, 'Името е твърде дълго.')
 });
@@ -169,6 +178,61 @@ export const actions: Actions = {
 		});
 
 		return { companySuccess: true };
+	},
+
+	updateCompanyContact: async ({ request, locals, getClientAddress }) => {
+		if (locals.user?.role !== 'admin') {
+			return fail(403, { contactError: 'Нямате права за тази операция.' });
+		}
+
+		const company = await db.company.findFirst();
+		if (!company) {
+			return fail(404, { contactError: 'Фирмата не е инициализирана.' });
+		}
+
+		const formData = await request.formData();
+		const raw = {
+			email: String(formData.get('email') ?? ''),
+			phone: String(formData.get('phone') ?? ''),
+			website: String(formData.get('website') ?? ''),
+			bankName: String(formData.get('bankName') ?? ''),
+			bankIban: String(formData.get('bankIban') ?? ''),
+			bankBic: String(formData.get('bankBic') ?? '')
+		};
+
+		const parsed = companyContactSchema.safeParse(raw);
+		if (!parsed.success) {
+			return fail(422, {
+				contactErrors: parsed.error.flatten().fieldErrors,
+				contactValues: raw
+			});
+		}
+
+		const d = parsed.data;
+		await db.company.update({
+			where: { id: company.id },
+			data: {
+				email: d.email || null,
+				phone: d.phone || null,
+				website: d.website || null,
+				bankName: d.bankName || null,
+				bankIban: d.bankIban || null,
+				bankBic: d.bankBic || null
+			}
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'company_settings_updated',
+			entityType: 'company',
+			entityId: company.id,
+			oldValueJson: { email: company.email, phone: company.phone, website: company.website, bankName: company.bankName, bankIban: company.bankIban, bankBic: company.bankBic },
+			newValueJson: { email: d.email, phone: d.phone, website: d.website, bankName: d.bankName, bankIban: d.bankIban, bankBic: d.bankBic },
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return { contactSuccess: true };
 	},
 
 	addExpenseCategory: async ({ request, locals }) => {

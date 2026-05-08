@@ -104,6 +104,12 @@ model Company {
   vatNumber              String?
   registeredAddress      String
   molName                String
+  email                  String?
+  phone                  String?
+  website                String?
+  bankName               String?
+  bankIban               String?
+  bankBic                String?
   defaultPaymentTermDays Int               @default(30)
   vatRegistered          Boolean           @default(true)
   vatRateBasisPoints     Int               @default(2000)

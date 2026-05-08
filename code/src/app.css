@@ -682,6 +682,7 @@ a:hover {
 
 .tbl tr.highlight-amber { background: var(--warning-subtle); }
 .tbl tr.highlight-amber:hover { background: #fef3c7; }
+.tbl tr.row-draft td { color: var(--text-muted); font-style: italic; }
 
 .tbl tr.locked { background: var(--surface); }
 .tbl tr.locked td { color: var(--text-muted); }
