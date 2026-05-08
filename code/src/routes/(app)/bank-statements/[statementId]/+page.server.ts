@@ -77,7 +77,11 @@ export const load: PageServerLoad = async ({ parent, params }) => {
 								description: true,
 								amountCents: true,
 								incurredDate: true,
-								category: { select: { name: true } }
+								category: { select: { name: true } },
+								attachments: {
+									select: { id: true, originalFilename: true },
+									orderBy: { createdAt: 'asc' }
+								}
 							}
 						}
 					}
@@ -234,6 +238,8 @@ export const actions: Actions = {
 		const { statementId } = params;
 		const formData = await request.formData();
 		const rowId = String(formData.get('rowId') ?? '');
+		const source = String(formData.get('source') ?? '').trim() || null;
+		const descriptionInput = String(formData.get('description') ?? '').trim();
 
 		const row = await db.bankStatementRow.findFirst({
 			where: {
@@ -262,6 +268,20 @@ export const actions: Actions = {
 			return fail(422, { error: 'Само кредитни редове могат да бъдат превърнати в приход.' });
 		}
 
+		const attachmentFiles = (formData.getAll('attachment') as File[]).filter(
+			(f) => f instanceof File && f.size > 0
+		);
+		const attachmentData: { blob: Uint8Array<ArrayBuffer>; filename: string; contentType: string; size: number }[] = [];
+		for (const file of attachmentFiles) {
+			const ab: ArrayBuffer = await file.arrayBuffer();
+			attachmentData.push({
+				blob: new Uint8Array(ab),
+				filename: file.name,
+				contentType: file.type || 'application/pdf',
+				size: file.size
+			});
+		}
+
 		// Find the bank container
 		const bankContainer = await db.moneyContainer.findUnique({
 			where: { companyId_containerType: { companyId: company.id, containerType: 'bank' } },
@@ -277,13 +297,26 @@ export const actions: Actions = {
 				data: {
 					companyId: company.id,
 					containerId: bankContainer.id,
-					description: row.description,
+					description: descriptionInput || row.description,
 					amountCents: row.amountCents,
 					incomeDate: row.transactionDate,
 					notes: 'От банково извлечение',
+					source,
 					createdByUserId: locals.user!.id
 				}
 			});
+
+			for (const att of attachmentData) {
+				await tx.standaloneIncomeAttachment.create({
+					data: {
+						standaloneIncomeId: income.id,
+						originalFilename: att.filename,
+						contentType: att.contentType,
+						sizeBytes: att.size,
+						blob: att.blob
+					}
+				});
+			}
 
 			await tx.ledgerEntry.create({
 				data: {
@@ -508,6 +541,20 @@ export const actions: Actions = {
 			return fail(404, { error: 'Банковият контейнер не е намерен. Моля, посетете Паричен поток първо.' });
 		}
 
+		const attachmentFiles = (formData.getAll('attachment') as File[]).filter(
+			(f) => f instanceof File && f.size > 0
+		);
+		const expenseAttachmentData: { blob: Uint8Array<ArrayBuffer>; filename: string; contentType: string; size: number }[] = [];
+		for (const file of attachmentFiles) {
+			const ab: ArrayBuffer = await file.arrayBuffer();
+			expenseAttachmentData.push({
+				blob: new Uint8Array(ab),
+				filename: file.name,
+				contentType: file.type || 'application/pdf',
+				size: file.size
+			});
+		}
+
 		const expense = await db.$transaction(async (tx) => {
 			const expense = await tx.expense.create({
 				data: {
@@ -523,6 +570,18 @@ export const actions: Actions = {
 					createdByUserId: locals.user!.id
 				}
 			});
+
+			for (const att of expenseAttachmentData) {
+				await tx.expenseAttachment.create({
+					data: {
+						expenseId: expense.id,
+						originalFilename: att.filename,
+						contentType: att.contentType,
+						sizeBytes: att.size,
+						blob: att.blob
+					}
+				});
+			}
 
 			await tx.ledgerEntry.create({
 				data: {
@@ -601,6 +660,20 @@ export const actions: Actions = {
 			return fail(404, { error: 'Банковият контейнер не е намерен. Моля, посетете Паричен поток първо.' });
 		}
 
+		const attachmentFiles = (formData.getAll('attachment') as File[]).filter(
+			(f) => f instanceof File && f.size > 0
+		);
+		const attachmentData: { blob: Uint8Array<ArrayBuffer>; filename: string; contentType: string; size: number }[] = [];
+		for (const file of attachmentFiles) {
+			const ab: ArrayBuffer = await file.arrayBuffer();
+			attachmentData.push({
+				blob: new Uint8Array(ab),
+				filename: file.name,
+				contentType: file.type || 'application/pdf',
+				size: file.size
+			});
+		}
+
 		await db.$transaction(async (tx) => {
 			await tx.expense.update({
 				where: { id: expense.id },
@@ -628,6 +701,18 @@ export const actions: Actions = {
 				where: { id: rowId },
 				data: { matchState: 'auto_matched', expenseId: expense.id }
 			});
+
+			for (const att of attachmentData) {
+				await tx.expenseAttachment.create({
+					data: {
+						expenseId: expense.id,
+						originalFilename: att.filename,
+						contentType: att.contentType,
+						sizeBytes: att.size,
+						blob: att.blob
+					}
+				});
+			}
 		});
 
 		await logAuditEvent({
@@ -641,6 +726,54 @@ export const actions: Actions = {
 		});
 
 		return { success: 'Редът е свързан с разход.' };
+	},
+
+	addExpenseAttachment: async ({ request, locals, params, getClientAddress }) => {
+		if (!locals.user || !canManageStatements(locals.user.role)) {
+			return fail(403, { error: 'Нямате права за тази операция.' });
+		}
+
+		const company = await getCompanyOrRedirect();
+		const formData = await request.formData();
+		const expenseId = String(formData.get('expenseId') ?? '');
+
+		const expense = await db.expense.findFirst({
+			where: { id: expenseId, companyId: company.id },
+			select: { id: true }
+		});
+		if (!expense) return fail(404, { error: 'Разходът не е намерен.' });
+
+		const attachmentFiles = (formData.getAll('attachment') as File[]).filter(
+			(f) => f instanceof File && f.size > 0
+		);
+		if (attachmentFiles.length === 0) {
+			return fail(422, { error: 'Изберете поне един файл.' });
+		}
+
+		for (const file of attachmentFiles) {
+			const ab: ArrayBuffer = await file.arrayBuffer();
+			await db.expenseAttachment.create({
+				data: {
+					expenseId: expense.id,
+					originalFilename: file.name,
+					contentType: file.type || 'application/pdf',
+					sizeBytes: file.size,
+					blob: new Uint8Array(ab)
+				}
+			});
+		}
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'expense_attachments_added',
+			entityType: 'expense',
+			entityId: expenseId,
+			newValueJson: { expenseId, count: attachmentFiles.length },
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return { success: `${attachmentFiles.length} файл(а) прикачени към разхода.` };
 	},
 
 	unresolveRow: async ({ request, locals, params, getClientAddress }) => {

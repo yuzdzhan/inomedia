@@ -8,6 +8,8 @@
 	let openMatchRowId = $state<string | null>(null);
 	let openExpenseRowId = $state<string | null>(null);
 	let openNewExpenseRowId = $state<string | null>(null);
+	let openIncomeRowId = $state<string | null>(null);
+	let openExpenseAttachmentRowId = $state<string | null>(null);
 	let selectedInvoiceId = $state<Record<string, string>>({});
 	let selectedExpenseId = $state<Record<string, string>>({});
 	let submitting = $state(false);
@@ -45,18 +47,40 @@
 	function toggleMatchPanel(rowId: string) {
 		openMatchRowId = openMatchRowId === rowId ? null : rowId;
 		openExpenseRowId = null;
+		openIncomeRowId = null;
+		openExpenseAttachmentRowId = null;
 	}
 
 	function toggleExpensePanel(rowId: string) {
 		openExpenseRowId = openExpenseRowId === rowId ? null : rowId;
 		openMatchRowId = null;
 		openNewExpenseRowId = null;
+		openIncomeRowId = null;
+		openExpenseAttachmentRowId = null;
 	}
 
 	function toggleNewExpensePanel(rowId: string) {
 		openNewExpenseRowId = openNewExpenseRowId === rowId ? null : rowId;
 		openExpenseRowId = null;
 		openMatchRowId = null;
+		openIncomeRowId = null;
+		openExpenseAttachmentRowId = null;
+	}
+
+	function toggleIncomePanel(rowId: string) {
+		openIncomeRowId = openIncomeRowId === rowId ? null : rowId;
+		openMatchRowId = null;
+		openExpenseRowId = null;
+		openNewExpenseRowId = null;
+		openExpenseAttachmentRowId = null;
+	}
+
+	function toggleExpenseAttachmentPanel(rowId: string) {
+		openExpenseAttachmentRowId = openExpenseAttachmentRowId === rowId ? null : rowId;
+		openMatchRowId = null;
+		openExpenseRowId = null;
+		openNewExpenseRowId = null;
+		openIncomeRowId = null;
 	}
 </script>
 
@@ -140,13 +164,28 @@
 									<button type="submit" class="btn btn-ghost btn-sm" disabled={submitting}>Неотносим</button>
 								</form>
 								{#if row.amountCents > 0}
-									<form method="POST" action="?/convertToStandaloneIncome" use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; await update(); }; }}>
-										<input type="hidden" name="rowId" value={row.id} />
-										<button type="submit" class="btn btn-secondary btn-sm" disabled={submitting} style="color:var(--success);">Превърни в приход</button>
-									</form>
+									<button type="button" class="btn btn-secondary btn-sm" onclick={() => toggleIncomePanel(row.id)} style="color:var(--success);">
+										Превърни в приход…
+									</button>
 									<button type="button" class="btn btn-secondary btn-sm" onclick={() => toggleMatchPanel(row.id)}>
 										Съвпадение с фактура…
 									</button>
+									{#if openIncomeRowId === row.id}
+										<div style="margin-top:4px; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); min-width:340px;">
+											<form method="POST" action="?/convertToStandaloneIncome" enctype="multipart/form-data"
+												style="display:flex; flex-direction:column; gap:8px;"
+												use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; openIncomeRowId = null; await update(); }; }}>
+												<input type="hidden" name="rowId" value={row.id} />
+												<input class="input" name="source" type="text" placeholder="Източник (напр. Shopify, Физически магазин)" />
+												<input class="input" name="description" type="text" placeholder="Описание" required value={row.description} />
+												<label style="font-size:12px; color:var(--text-muted); display:flex; flex-direction:column; gap:4px;">
+													Прикачени файлове (по избор)
+													<input type="file" name="attachment" accept="application/pdf" multiple />
+												</label>
+												<button type="submit" class="btn btn-primary btn-sm" disabled={submitting}>Превърни в приход</button>
+											</form>
+										</div>
+									{/if}
 									{#if openMatchRowId === row.id}
 										<div style="margin-top:4px; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); display:flex; flex-direction:column; gap:8px; min-width:300px;">
 											<form method="POST" action="?/manualMatchInvoice" use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; openMatchRowId = null; await update(); }; }}>
@@ -170,21 +209,28 @@
 									</button>
 									{#if openExpenseRowId === row.id}
 										<div style="margin-top:4px; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); display:flex; flex-direction:column; gap:8px; min-width:320px;">
-											<form method="POST" action="?/matchExpense" use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; openExpenseRowId = null; await update(); }; }}>
+											<form method="POST" action="?/matchExpense" enctype="multipart/form-data"
+												style="display:flex; flex-direction:column; gap:8px;"
+												use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; openExpenseRowId = null; await update(); }; }}>
 												<input type="hidden" name="rowId" value={row.id} />
-												<select class="select" name="expenseId" bind:value={selectedExpenseId[row.id]} style="width:100%; margin-bottom:8px;">
+												<select class="select" name="expenseId" bind:value={selectedExpenseId[row.id]} style="width:100%;">
 													<option value="">— Изберете разход —</option>
 													{#each data.unpaidExpenses as exp}
 														<option value={exp.id}>{exp.categoryName} · {exp.description} · {formatAmount(exp.amountCents)}</option>
 													{/each}
 												</select>
+												<label style="font-size:12px; color:var(--text-muted); display:flex; flex-direction:column; gap:4px;">
+													Прикачени файлове (по избор)
+													<input type="file" name="attachment" accept="application/pdf" multiple />
+												</label>
 												<button type="submit" class="btn btn-primary btn-sm" disabled={submitting || !selectedExpenseId[row.id]}>Свържи</button>
 											</form>
 										</div>
 									{/if}
 									{#if openNewExpenseRowId === row.id}
 										<div style="margin-top:4px; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); min-width:340px;">
-											<form method="POST" action="?/createAndMatchExpense" style="display:flex; flex-direction:column; gap:8px;"
+											<form method="POST" action="?/createAndMatchExpense" enctype="multipart/form-data"
+												style="display:flex; flex-direction:column; gap:8px;"
 												use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; openNewExpenseRowId = null; await update(); }; }}>
 												<input type="hidden" name="rowId" value={row.id} />
 												<select class="select" name="categoryId" required>
@@ -206,6 +252,10 @@
 													value={row.transactionDate instanceof Date
 														? row.transactionDate.toISOString().slice(0, 10)
 														: String(row.transactionDate).slice(0, 10)} />
+												<label style="font-size:12px; color:var(--text-muted); display:flex; flex-direction:column; gap:4px;">
+													Прикачени файлове (по избор)
+													<input type="file" name="attachment" accept="application/pdf" multiple />
+												</label>
 												<button type="submit" class="btn btn-primary btn-sm" disabled={submitting}>Създай и свържи</button>
 											</form>
 										</div>
@@ -255,13 +305,28 @@
 									<button type="submit" class="btn btn-ghost btn-sm" disabled={submitting}>Неотносим</button>
 								</form>
 								{#if row.amountCents > 0}
-									<form method="POST" action="?/convertToStandaloneIncome" use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; await update(); }; }}>
-										<input type="hidden" name="rowId" value={row.id} />
-										<button type="submit" class="btn btn-secondary btn-sm" disabled={submitting} style="color:var(--success);">Превърни в приход</button>
-									</form>
+									<button type="button" class="btn btn-secondary btn-sm" onclick={() => toggleIncomePanel(row.id)} style="color:var(--success);">
+										Превърни в приход…
+									</button>
 									<button type="button" class="btn btn-secondary btn-sm" onclick={() => toggleMatchPanel(row.id)}>
 										Съвпадение с фактура…
 									</button>
+									{#if openIncomeRowId === row.id}
+										<div style="margin-top:4px; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); min-width:340px;">
+											<form method="POST" action="?/convertToStandaloneIncome" enctype="multipart/form-data"
+												style="display:flex; flex-direction:column; gap:8px;"
+												use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; openIncomeRowId = null; await update(); }; }}>
+												<input type="hidden" name="rowId" value={row.id} />
+												<input class="input" name="source" type="text" placeholder="Източник (напр. Shopify, Физически магазин)" />
+												<input class="input" name="description" type="text" placeholder="Описание" required value={row.description} />
+												<label style="font-size:12px; color:var(--text-muted); display:flex; flex-direction:column; gap:4px;">
+													Прикачени файлове (по избор)
+													<input type="file" name="attachment" accept="application/pdf" multiple />
+												</label>
+												<button type="submit" class="btn btn-primary btn-sm" disabled={submitting}>Превърни в приход</button>
+											</form>
+										</div>
+									{/if}
 									{#if openMatchRowId === row.id}
 										<div style="margin-top:4px; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); display:flex; flex-direction:column; gap:8px; min-width:300px;">
 											<form method="POST" action="?/manualMatchInvoice" use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; openMatchRowId = null; await update(); }; }}>
@@ -285,21 +350,28 @@
 									</button>
 									{#if openExpenseRowId === row.id}
 										<div style="margin-top:4px; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); display:flex; flex-direction:column; gap:8px; min-width:320px;">
-											<form method="POST" action="?/matchExpense" use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; openExpenseRowId = null; await update(); }; }}>
+											<form method="POST" action="?/matchExpense" enctype="multipart/form-data"
+												style="display:flex; flex-direction:column; gap:8px;"
+												use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; openExpenseRowId = null; await update(); }; }}>
 												<input type="hidden" name="rowId" value={row.id} />
-												<select class="select" name="expenseId" bind:value={selectedExpenseId[row.id]} style="width:100%; margin-bottom:8px;">
+												<select class="select" name="expenseId" bind:value={selectedExpenseId[row.id]} style="width:100%;">
 													<option value="">— Изберете разход —</option>
 													{#each data.unpaidExpenses as exp}
 														<option value={exp.id}>{exp.categoryName} · {exp.description} · {formatAmount(exp.amountCents)}</option>
 													{/each}
 												</select>
+												<label style="font-size:12px; color:var(--text-muted); display:flex; flex-direction:column; gap:4px;">
+													Прикачени файлове (по избор)
+													<input type="file" name="attachment" accept="application/pdf" multiple />
+												</label>
 												<button type="submit" class="btn btn-primary btn-sm" disabled={submitting || !selectedExpenseId[row.id]}>Свържи</button>
 											</form>
 										</div>
 									{/if}
 									{#if openNewExpenseRowId === row.id}
 										<div style="margin-top:4px; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); min-width:340px;">
-											<form method="POST" action="?/createAndMatchExpense" style="display:flex; flex-direction:column; gap:8px;"
+											<form method="POST" action="?/createAndMatchExpense" enctype="multipart/form-data"
+												style="display:flex; flex-direction:column; gap:8px;"
 												use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; openNewExpenseRowId = null; await update(); }; }}>
 												<input type="hidden" name="rowId" value={row.id} />
 												<select class="select" name="categoryId" required>
@@ -321,6 +393,10 @@
 													value={row.transactionDate instanceof Date
 														? row.transactionDate.toISOString().slice(0, 10)
 														: String(row.transactionDate).slice(0, 10)} />
+												<label style="font-size:12px; color:var(--text-muted); display:flex; flex-direction:column; gap:4px;">
+													Прикачени файлове (по избор)
+													<input type="file" name="attachment" accept="application/pdf" multiple />
+												</label>
 												<button type="submit" class="btn btn-primary btn-sm" disabled={submitting}>Създай и свържи</button>
 											</form>
 										</div>
@@ -373,16 +449,49 @@
 							{:else if row.standaloneIncome}
 								<span style="color:var(--success);">Приход: {row.standaloneIncome.description}</span>
 							{:else if row.expense}
-								<span style="color:var(--danger);">Разход: {row.expense.category.name} · {row.expense.description}</span>
+								<div>
+									<span style="color:var(--danger);">Разход: {row.expense.category.name} · {row.expense.description}</span>
+									{#if row.expense.attachments.length > 0}
+										<div style="margin-top:4px; display:flex; flex-direction:column; gap:2px;">
+											{#each row.expense.attachments as att}
+												<a href="/bank-statements/attachments/pdf/expense/{att.id}" target="_blank"
+													style="color:var(--accent); text-decoration:none; font-size:11px; white-space:nowrap;">
+													↗ {att.originalFilename}
+												</a>
+											{/each}
+										</div>
+									{/if}
+								</div>
 							{:else}
 								<span class="muted">—</span>
 							{/if}
 						</td>
 						<td>
-							<form method="POST" action="?/unresolveRow" use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; await update(); }; }}>
-								<input type="hidden" name="rowId" value={row.id} />
-								<button type="submit" class="btn btn-ghost btn-sm" disabled={submitting}>Развъзи</button>
-							</form>
+							<div style="display:flex; flex-wrap:wrap; gap:6px; align-items:flex-start;">
+								<form method="POST" action="?/unresolveRow" use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; await update(); }; }}>
+									<input type="hidden" name="rowId" value={row.id} />
+									<button type="submit" class="btn btn-ghost btn-sm" disabled={submitting}>Развъзи</button>
+								</form>
+								{#if row.expense}
+									<button type="button" class="btn btn-secondary btn-sm" onclick={() => toggleExpenseAttachmentPanel(row.id)}>
+										Прикачи PDF…
+									</button>
+									{#if openExpenseAttachmentRowId === row.id}
+										<div style="margin-top:4px; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); min-width:300px;">
+											<form method="POST" action="?/addExpenseAttachment" enctype="multipart/form-data"
+												style="display:flex; flex-direction:column; gap:8px;"
+												use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; openExpenseAttachmentRowId = null; await update(); }; }}>
+												<input type="hidden" name="expenseId" value={row.expense.id} />
+												<label style="font-size:12px; color:var(--text-muted); display:flex; flex-direction:column; gap:4px;">
+													Изберете файлове
+													<input type="file" name="attachment" accept="application/pdf" multiple required />
+												</label>
+												<button type="submit" class="btn btn-primary btn-sm" disabled={submitting}>Прикачи</button>
+											</form>
+										</div>
+									{/if}
+								{/if}
+							</div>
 						</td>
 					</tr>
 				{/each}

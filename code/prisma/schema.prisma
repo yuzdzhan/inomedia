@@ -282,15 +282,31 @@ model StandaloneIncome {
   amountCents         Int
   incomeDate          DateTime       @db.Date
   notes               String?
+  source              String?
   createdByUserId     String
   createdByUser       User           @relation("StandaloneIncomeCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   ledgerEntry         LedgerEntry?
   statementRows       BankStatementRow[]
+  attachments         StandaloneIncomeAttachment[]
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
 
   @@index([companyId, incomeDate])
   @@map("standalone_income")
+}
+
+model StandaloneIncomeAttachment {
+  id                 String           @id @default(cuid())
+  standaloneIncomeId String
+  standaloneIncome   StandaloneIncome @relation(fields: [standaloneIncomeId], references: [id], onDelete: Cascade)
+  originalFilename   String
+  contentType        String
+  sizeBytes          Int
+  blob               Bytes
+  createdAt          DateTime         @default(now())
+
+  @@index([standaloneIncomeId])
+  @@map("standalone_income_attachment")
 }
 
 model Client {
@@ -628,6 +644,7 @@ model Expense {
   recurringTemplateId String?
   recurringTemplate   RecurringExpenseTemplate? @relation(fields: [recurringTemplateId], references: [id], onDelete: SetNull)
   isFromTemplate      Boolean         @default(false)
+  attachments         ExpenseAttachment[]
   createdByUserId     String
   createdByUser       User            @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   createdAt           DateTime        @default(now())
@@ -638,6 +655,20 @@ model Expense {
   @@index([clientId, incurredDate])
   @@index([recurringTemplateId])
   @@map("expense")
+}
+
+model ExpenseAttachment {
+  id               String   @id @default(cuid())
+  expenseId        String
+  expense          Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  originalFilename String
+  contentType      String
+  sizeBytes        Int
+  blob             Bytes
+  createdAt        DateTime @default(now())
+
+  @@index([expenseId])
+  @@map("expense_attachment")
 }
 
 model RecurringExpenseTemplate {

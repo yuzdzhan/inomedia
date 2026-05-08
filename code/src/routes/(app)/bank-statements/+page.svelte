@@ -42,6 +42,9 @@
 		<h1 class="page-title">Банкови извлечения</h1>
 		<p class="page-sub">Импортиране и преглед на банкови извлечения</p>
 	</div>
+	<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+		<a href="/bank-statements/attachments" class="btn btn-secondary btn-sm">Прикачени файлове</a>
+	</div>
 	<div class="page-header-actions">
 		<label class="btn btn-secondary btn-sm" style="cursor: pointer; position: relative; overflow: hidden;">
 			Избери файл

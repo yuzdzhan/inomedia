@@ -77,7 +77,7 @@
 			label: 'Банка и каса',
 			icon: 'bank',
 			href: '/bank-statements',
-			active: (p) => p.startsWith('/bank-statements') || p === '/cashflow',
+			active: (p) => p.startsWith('/bank-statements') || p === '/cashflow' || p.startsWith('/bank-statements/attachments'),
 			roles: ['admin', 'accountant']
 		},
 		{
