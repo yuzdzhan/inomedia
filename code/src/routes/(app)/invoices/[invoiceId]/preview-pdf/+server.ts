@@ -41,6 +41,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 						description: true,
 						hourlyUninvoicedValueCents: true,
 						flatFeeValueCents: true,
+						snapshotJson: true,
 						task: {
 							select: {
 								taskList: {
@@ -59,6 +60,12 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 				vatNumber: true,
 				registeredAddress: true,
 				molName: true,
+				email: true,
+				phone: true,
+				website: true,
+				bankName: true,
+				bankIban: true,
+				bankBic: true,
 				currency: true
 			}
 		})
@@ -66,6 +73,23 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 
 	if (!invoice) throw error(404, 'Черновата не е намерена.');
 	if (!company) throw error(404, 'Фирмата не е намерена.');
+
+	const projectMap = new Map<string, { tasks: { description: string; hours: number | null; amountCents: number }[]; netAmountCents: number }>();
+	for (const sel of invoice.taskSelections) {
+		const projectName = sel.task.taskList.project.name;
+		let hours: number | null = null;
+		if (sel.hourlyUninvoicedValueCents != null && sel.snapshotJson && typeof sel.snapshotJson === 'object' && !Array.isArray(sel.snapshotJson)) {
+			const snap = sel.snapshotJson as { timeLogs?: Array<{ durationMinutes?: number }> };
+			const totalMinutes = (snap.timeLogs ?? []).reduce((s, t) => s + (t.durationMinutes ?? 0), 0);
+			if (totalMinutes > 0) hours = totalMinutes / 60;
+		}
+		const amountCents = sel.hourlyUninvoicedValueCents ?? sel.flatFeeValueCents ?? 0;
+		if (!projectMap.has(projectName)) projectMap.set(projectName, { tasks: [], netAmountCents: 0 });
+		const grp = projectMap.get(projectName)!;
+		grp.tasks.push({ description: sel.description, hours, amountCents });
+		grp.netAmountCents += amountCents;
+	}
+	const projectGroups = Array.from(projectMap.entries()).map(([projectName, data]) => ({ projectName, tasks: data.tasks, netAmountCents: data.netAmountCents }));
 
 	const snapshot: InvoicePdfSnapshot = {
 		invoiceNumber: invoice.invoiceNumber ?? 'ЧЕРНОВА',
@@ -80,8 +104,15 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 			registrationNumber: company.eikBulstat,
 			vatNumber: company.vatNumber,
 			address: company.registeredAddress,
-			molName: company.molName
+			molName: company.molName,
+			email: company.email,
+			phone: company.phone,
+			website: company.website
 		},
+		bankName: company.bankName,
+		bankIban: company.bankIban,
+		bankBic: company.bankBic,
+		paidTotalCents: 0,
 		client: {
 			legalName: invoice.client.legalName,
 			registrationNumber: invoice.client.registrationNumber,
@@ -89,11 +120,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 			address: invoice.client.billingAddress,
 			molName: invoice.client.mol
 		},
-		lines: invoice.taskSelections.map((sel) => ({
-			description: sel.description,
-			projectName: sel.task.taskList.project.name,
-			amountCents: sel.hourlyUninvoicedValueCents ?? sel.flatFeeValueCents ?? 0
-		})),
+		projectGroups,
 		netTotalCents: invoice.netTotalCents,
 		vatTotalCents: invoice.vatTotalCents,
 		grossTotalCents: invoice.grossTotalCents,

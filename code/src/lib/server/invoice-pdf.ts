@@ -7,12 +7,21 @@ type InvoicePdfParty = {
 	vatNumber?: string | null;
 	address?: string | null;
 	molName?: string | null;
+	email?: string | null;
+	phone?: string | null;
+	website?: string | null;
 };
 
-type InvoicePdfLine = {
+type InvoicePdfTask = {
 	description: string;
+	hours: number | null;
 	amountCents: number;
+};
+
+type InvoicePdfProjectGroup = {
 	projectName: string;
+	tasks: InvoicePdfTask[];
+	netAmountCents: number;
 };
 
 export type InvoicePdfSnapshot = {
@@ -25,11 +34,15 @@ export type InvoicePdfSnapshot = {
 	paymentMethod: string;
 	company: InvoicePdfParty;
 	client: InvoicePdfParty;
-	lines: InvoicePdfLine[];
+	projectGroups: InvoicePdfProjectGroup[];
 	netTotalCents: number;
 	vatTotalCents: number;
 	grossTotalCents: number;
 	vatRateBasisPoints: number;
+	paidTotalCents?: number;
+	bankName?: string | null;
+	bankIban?: string | null;
+	bankBic?: string | null;
 };
 
 type TtfInfo = {
@@ -53,15 +66,21 @@ type Page = {
 const A4_WIDTH = 595;
 const A4_HEIGHT = 842;
 const PAGE_MARGIN = 48;
-const FONT_PATH = path.resolve(process.cwd(), 'static/fonts/Lato-Regular.ttf');
+const FONT_PATH = path.resolve(process.cwd(), 'static/fonts/OpenSans-Regular.ttf');
 
-// Colors: RGB 0–1
-const C_PURPLE: readonly [number, number, number] = [0.310, 0.216, 0.541];   // #4f378a
-const C_LAVENDER: readonly [number, number, number] = [0.820, 0.760, 0.960]; // soft lavender on purple
-const C_WHITE: readonly [number, number, number] = [1.0, 1.0, 1.0];
-const C_MUTED: readonly [number, number, number] = [0.435, 0.451, 0.502];    // #6f7380
-const C_LIGHT_BG: readonly [number, number, number] = [0.976, 0.980, 0.988]; // #f9fafb
-const C_BORDER: readonly [number, number, number] = [0.894, 0.902, 0.918];   // #e5e7eb
+// Colors: RGB 0–1 — from template palette
+const C_PRIMARY: readonly [number, number, number]      = [0.310, 0.216, 0.541]; // #4f378a
+const C_CHARCOAL: readonly [number, number, number]     = [0.200, 0.255, 0.333]; // #334155
+const C_MUTED: readonly [number, number, number]        = [0.286, 0.271, 0.318]; // #494551
+const C_BLACK: readonly [number, number, number]        = [0.114, 0.106, 0.125]; // #1d1b20
+const C_BORDER: readonly [number, number, number]       = [0.898, 0.910, 0.922]; // #E5E7EB
+const C_TBL_HDR: readonly [number, number, number]      = [0.976, 0.980, 0.988]; // #F9FAFB
+const C_ALT_ROW: readonly [number, number, number]      = [0.973, 0.949, 0.980]; // #f8f2fa
+const C_SURFACE_HIGH: readonly [number, number, number] = [0.925, 0.902, 0.933]; // #ece6ee
+const C_BADGE_BG: readonly [number, number, number]     = [0.788, 0.655, 0.302]; // #c9a74d
+const C_BADGE_FG: readonly [number, number, number]     = [0.314, 0.239, 0.000]; // #503d00
+const C_ERROR: readonly [number, number, number]        = [0.729, 0.102, 0.102]; // #ba1a1a
+const C_SUCCESS: readonly [number, number, number]      = [0.133, 0.545, 0.133];
 
 let fontInfoPromise: Promise<TtfInfo> | null = null;
 
@@ -77,23 +96,21 @@ function readUInt32(buffer: Buffer, offset: number) {
 	return buffer.readUInt32BE(offset);
 }
 
-function encodePdfString(value: string) {
-	return value.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
-}
-
 function formatMoney(valueCents: number, currency: string) {
-	return `${(valueCents / 100).toFixed(2)} ${currency}`;
+	const symbol = currency === 'EUR' ? '€' : currency === 'USD' ? '$' : currency === 'BGN' ? 'лв.' : currency;
+	return `${(valueCents / 100).toFixed(2)} ${symbol}`;
 }
 
 function formatPaymentMethod(value: string) {
 	return value === 'cash' ? 'В брой' : 'Банков превод';
 }
 
-function formatDateRange(from: string | null, to: string | null) {
-	if (from && to) return `${from} - ${to}`;
-	if (from) return from;
-	if (to) return to;
-	return 'Няма';
+function formatHours(h: number): string {
+	const totalMin = Math.round(h * 60);
+	const hrs = Math.floor(totalMin / 60);
+	const min = totalMin % 60;
+	if (min === 0) return `${hrs}h`;
+	return `${hrs}h ${min}min`;
 }
 
 async function loadFontInfo(): Promise<TtfInfo> {
@@ -185,7 +202,10 @@ async function loadFontInfo(): Promise<TtfInfo> {
 				advanceWidthForGlyph: (glyphId: number) =>
 					advanceWidths[Math.min(glyphId, advanceWidths.length - 1)] ?? advanceWidths.at(-1) ?? 1000
 			};
-		})();
+		})().catch((err) => {
+			fontInfoPromise = null;
+			throw err;
+		});
 	}
 
 	return fontInfoPromise;
@@ -395,179 +415,245 @@ function renderInvoicePages(
 
 	const RIGHT_X = A4_WIDTH - PAGE_MARGIN;
 	const CONTENT_W = RIGHT_X - PAGE_MARGIN;
+	const MID_X = PAGE_MARGIN + CONTENT_W / 2;
+	const HALF_W = CONTENT_W / 2 - 8;
 
 	function ensureSpace(height: number) {
-		if (page.y - height < PAGE_MARGIN) {
+		if (page.y - height < PAGE_MARGIN + 20) {
 			page = createPage();
 			pages.push(page);
 		}
 	}
 
-	function rtext(
-		str: string,
-		rightX: number,
-		y: number,
-		size: number,
-		color?: readonly [number, number, number]
-	) {
-		const w = textWidth(str, size, widthByCid, cidByCodePoint);
-		addText(page, str, rightX - w, y, size, cidByCodePoint, color);
+	function rtext(str: string, rx: number, y: number, sz: number, col?: readonly [number, number, number]) {
+		const w = textWidth(str, sz, widthByCid, cidByCodePoint);
+		addText(page, str, rx - w, y, sz, cidByCodePoint, col);
 	}
 
-	// ── Header bar ───────────────────────────────────────────────────────────────
-	const HEADER_H = 66;
-	addRect(page, 0, A4_HEIGHT - HEADER_H, A4_WIDTH, HEADER_H, C_PURPLE);
+	// ── 1. HEADER ─────────────────────────────────────────────────────────────
+	const hY = page.y;
 
-	addText(page, 'ФАКТУРА', PAGE_MARGIN, A4_HEIGHT - 26, 18, cidByCodePoint, C_WHITE);
-	addText(page, snapshot.invoiceNumber, PAGE_MARGIN, A4_HEIGHT - 45, 10, cidByCodePoint, C_LAVENDER);
+	// Company name + contact info
+	addText(page, snapshot.company.legalName, PAGE_MARGIN, hY - 20, 13, cidByCodePoint, C_PRIMARY);
+	let cy = hY - 36;
+	if (snapshot.company.email)   { addText(page, snapshot.company.email,   PAGE_MARGIN, cy, 9, cidByCodePoint, C_MUTED); cy -= 16; }
+	if (snapshot.company.phone)   { addText(page, snapshot.company.phone,   PAGE_MARGIN, cy, 9, cidByCodePoint, C_MUTED); cy -= 16; }
+	if (snapshot.company.website) { addText(page, snapshot.company.website, PAGE_MARGIN, cy, 9, cidByCodePoint, C_MUTED); }
 
-	rtext(snapshot.company.legalName, RIGHT_X, A4_HEIGHT - 28, 11, C_WHITE);
-	const regLabel = snapshot.company.vatNumber
-		? `ДДС: ${snapshot.company.vatNumber}`
-		: snapshot.company.registrationNumber
-			? `ЕИК: ${snapshot.company.registrationNumber}`
-			: '';
-	if (regLabel) {
-		rtext(regLabel, RIGHT_X, A4_HEIGHT - 44, 9, C_LAVENDER);
+	// Right: ФАКТУРА + meta
+	rtext('ФАКТУРА', RIGHT_X, hY - 24, 18, C_CHARCOAL);
+	const isDraft = !snapshot.invoiceNumber || snapshot.invoiceNumber === 'ЧЕРНОВА';
+	rtext(isDraft ? '(ЧЕРНОВА)' : '(ОРИГИНАЛ)', RIGHT_X, hY - 40, 11, C_MUTED);
+
+	const ML = 388;
+	addText(page, 'Номер:', ML, hY - 56, 8, cidByCodePoint, C_MUTED);
+	rtext(snapshot.invoiceNumber || '—', RIGHT_X, hY - 56, 9, C_BLACK);
+	addText(page, 'Дата:', ML, hY - 72, 8, cidByCodePoint, C_MUTED);
+	rtext(snapshot.issueDate || '—', RIGHT_X, hY - 72, 9, C_BLACK);
+	addText(page, 'Падеж:', ML, hY - 88, 8, cidByCodePoint, C_MUTED);
+	rtext(snapshot.dueDate || '—', RIGHT_X, hY - 88, 9, C_BLACK);
+
+	// Status badge
+	const bl = isDraft ? 'ЧЕРНОВА' : 'НЕПЛАТЕНА';
+	const bw = textWidth(bl, 8, widthByCid, cidByCodePoint) + 14;
+	addRect(page, RIGHT_X - bw, hY - 109, bw, 14, isDraft ? C_SURFACE_HIGH : C_BADGE_BG);
+	rtext(bl, RIGHT_X - 7, hY - 103, 8, isDraft ? C_MUTED : C_BADGE_FG);
+
+	// Header divider
+	const hBot = hY - 120;
+	addLine(page, PAGE_MARGIN, hBot, RIGHT_X, hBot, C_BORDER);
+	page.y = hBot - 16;
+
+	// ── 2. LEGAL GRID ─────────────────────────────────────────────────────────
+	function pfield(label: string, val: string | null | undefined, x: number, y: number): number {
+		if (!val) return y;
+		const paragraphs = val.split('\n').map((p) => p.trim()).filter(Boolean);
+		if (paragraphs.length === 0) return y;
+		addText(page, label, x, y, 8, cidByCodePoint, C_MUTED);
+		const lw = textWidth(label, 8, widthByCid, cidByCodePoint) + 3;
+		const allLines: string[] = [];
+		for (const para of paragraphs) {
+			allLines.push(...wrapText(para, HALF_W - lw - 4, 9, widthByCid, cidByCodePoint));
+		}
+		addText(page, allLines[0] ?? '', x + lw, y, 9, cidByCodePoint, C_BLACK);
+		let ny = y - 15;
+		for (let i = 1; i < allLines.length; i++) {
+			addText(page, allLines[i] ?? '', x + lw, ny, 9, cidByCodePoint, C_BLACK);
+			ny -= 15;
+		}
+		return ny;
 	}
 
-	// ── Metadata row ─────────────────────────────────────────────────────────────
-	page.y = A4_HEIGHT - HEADER_H - 22;
-
-	const metaColW = CONTENT_W / 4;
-	const metaItems: [string, string][] = [
-		['ДАТА НА ИЗДАВАНЕ', snapshot.issueDate],
-		['ПАДЕЖ', snapshot.dueDate ?? 'Няма'],
-		['ПЕРИОД', formatDateRange(snapshot.servicePeriodFrom, snapshot.servicePeriodTo)],
-		['ПЛАЩАНЕ', formatPaymentMethod(snapshot.paymentMethod)]
-	];
-
-	for (let i = 0; i < metaItems.length; i++) {
-		const mx = PAGE_MARGIN + i * metaColW;
-		const [label, value] = metaItems[i];
-		addText(page, label, mx, page.y + 13, 7, cidByCodePoint, C_MUTED);
-		addText(page, value, mx, page.y, 9, cidByCodePoint);
-	}
-	page.y -= 16;
-
-	// ── Divider ──────────────────────────────────────────────────────────────────
-	addLine(page, PAGE_MARGIN, page.y, RIGHT_X, page.y, C_BORDER);
+	// Section titles with underlines
+	addText(page, 'ДОСТАВЧИК', PAGE_MARGIN, page.y, 10, cidByCodePoint, C_CHARCOAL);
+	addLine(page, PAGE_MARGIN, page.y - 5, PAGE_MARGIN + HALF_W, page.y - 5, C_BORDER);
+	addText(page, 'КЛИЕНТ', MID_X + 4, page.y, 10, cidByCodePoint, C_CHARCOAL);
+	addLine(page, MID_X + 4, page.y - 5, MID_X + 4 + HALF_W, page.y - 5, C_BORDER);
 	page.y -= 18;
 
-	// ── Party columns ────────────────────────────────────────────────────────────
-	const COL_L = PAGE_MARGIN;
-	const COL_MID = A4_WIDTH / 2 + 8;
-	const COL_W = A4_WIDTH / 2 - PAGE_MARGIN - 8;
+	const partyY = page.y;
 
-	addText(page, 'ДОСТАВЧИК', COL_L, page.y, 7, cidByCodePoint, C_MUTED);
-	addText(page, 'ПОЛУЧАТЕЛ', COL_MID, page.y, 7, cidByCodePoint, C_MUTED);
-	page.y -= 13;
+	// Provider
+	addText(page, snapshot.company.legalName, PAGE_MARGIN, partyY, 10, cidByCodePoint, C_BLACK);
+	let lY = partyY - 16;
+	lY = pfield('ЕИК/БУЛСТАТ:', snapshot.company.registrationNumber, PAGE_MARGIN, lY);
+	lY = pfield('ДДС №:', snapshot.company.vatNumber, PAGE_MARGIN, lY);
+	lY = pfield('Адрес:', snapshot.company.address, PAGE_MARGIN, lY);
+	lY = pfield('МОЛ:', snapshot.company.molName, PAGE_MARGIN, lY);
 
-	const partyStartY = page.y;
+	// Client
+	addText(page, snapshot.client.legalName, MID_X + 4, partyY, 10, cidByCodePoint, C_BLACK);
+	let rY = partyY - 16;
+	rY = pfield('ЕИК/БУЛСТАТ:', snapshot.client.registrationNumber, MID_X + 4, rY);
+	rY = pfield('ДДС №:', snapshot.client.vatNumber, MID_X + 4, rY);
+	rY = pfield('Адрес:', snapshot.client.address, MID_X + 4, rY);
+	rY = pfield('МОЛ:', snapshot.client.molName, MID_X + 4, rY);
 
-	function drawParty(party: InvoicePdfParty, x: number): number {
-		let y = partyStartY;
+	page.y = Math.min(lY, rY) - 12;
+	addLine(page, PAGE_MARGIN, page.y + 5, RIGHT_X, page.y + 5, C_BORDER);
+	page.y -= 16;
 
-		addText(page, party.legalName, x, y, 11, cidByCodePoint);
-		y -= 15;
+	// ── 3. ITEMS TABLE ────────────────────────────────────────────────────────
+	const NW = 20, VW = 44, TW = 82;
+	const DX = PAGE_MARGIN + NW + 4;
+	const DW = CONTENT_W - NW - 4 - VW - TW;
+	const VX = DX + DW;
 
-		function fieldRow(label: string, value: string | null | undefined): void {
-			if (!value) return;
-			const labelW = textWidth(label, 9, widthByCid, cidByCodePoint);
-			addText(page, label, x, y, 9, cidByCodePoint, C_MUTED);
-			const lines = wrapText(value, COL_W - labelW, 9, widthByCid, cidByCodePoint);
-			addText(page, lines[0] ?? '', x + labelW, y, 9, cidByCodePoint);
-			y -= 13;
-			for (let i = 1; i < lines.length; i++) {
-				addText(page, lines[i] ?? '', x, y, 9, cidByCodePoint);
-				y -= 13;
+	ensureSpace(24 + 30);
+	addRect(page, PAGE_MARGIN, page.y - 22, CONTENT_W, 22, C_TBL_HDR);
+	addText(page, '№', PAGE_MARGIN + 5, page.y - 14, 8, cidByCodePoint, C_MUTED);
+	addText(page, 'Описание', DX, page.y - 14, 8, cidByCodePoint, C_MUTED);
+	rtext('ДДС %', VX + VW, page.y - 14, 8, C_MUTED);
+	rtext('Сума', RIGHT_X - 4, page.y - 14, 8, C_MUTED);
+	page.y -= 22;
+
+	const vp = `${(snapshot.vatRateBasisPoints / 100).toFixed(0)}%`;
+	for (let gi = 0; gi < snapshot.projectGroups.length; gi++) {
+		const group = snapshot.projectGroups[gi];
+
+		// Pre-compute wrapped task lines
+		const taskLines = group.tasks.map((task) => {
+			const label = task.hours != null
+				? `${formatHours(task.hours)} — ${task.description}`
+				: task.description;
+			return wrapText(label, DW - 16, 8, widthByCid, cidByCodePoint);
+		});
+		const totalTaskLines = taskLines.reduce((s, l) => s + l.length, 0);
+		const taskBlockH = group.tasks.length > 0
+			? 8 + totalTaskLines * 13 + Math.max(0, group.tasks.length - 1) * 3 + 8
+			: 0;
+		const groupH = 22 + taskBlockH;
+
+		ensureSpace(Math.min(groupH + 4, A4_HEIGHT - PAGE_MARGIN * 2 - 20));
+
+		// Project header row
+		addRect(page, PAGE_MARGIN, page.y - 22, CONTENT_W, 22, gi % 2 === 0 ? C_SURFACE_HIGH : C_ALT_ROW);
+		const py = page.y - 13;
+		addText(page, String(gi + 1), PAGE_MARGIN + 5, py, 9, cidByCodePoint, C_MUTED);
+		addText(page, group.projectName, DX, py, 9, cidByCodePoint, C_BLACK);
+		rtext(vp, VX + VW - 4, py, 9, C_MUTED);
+		rtext(formatMoney(group.netAmountCents, snapshot.currency), RIGHT_X - 4, py, 9, C_BLACK);
+		page.y -= 22;
+
+		// Task sub-rows (descriptions, indented)
+		if (group.tasks.length > 0) {
+			let taskY = page.y - 8;
+			for (let ti = 0; ti < group.tasks.length; ti++) {
+				const lines = taskLines[ti] ?? [];
+				for (let j = 0; j < lines.length; j++) {
+					addText(page, lines[j] ?? '', DX + 12, taskY, 8, cidByCodePoint, C_MUTED);
+					taskY -= 13;
+				}
+				if (ti < group.tasks.length - 1) taskY -= 3;
 			}
+			page.y = taskY - 8;
 		}
 
-		fieldRow('ЕИК: ', party.registrationNumber);
-		fieldRow('ДДС: ', party.vatNumber);
-		fieldRow('Адрес: ', party.address);
-		fieldRow('МОЛ: ', party.molName);
-		return y;
-	}
-
-	const leftBottom = drawParty(snapshot.company, COL_L);
-	const rightBottom = drawParty(snapshot.client, COL_MID);
-	page.y = Math.min(leftBottom, rightBottom) - 14;
-
-	// ── Divider ──────────────────────────────────────────────────────────────────
-	addLine(page, PAGE_MARGIN, page.y, RIGHT_X, page.y, C_BORDER);
-	page.y -= 4;
-
-	// ── Line items table ─────────────────────────────────────────────────────────
-	const DESC_COL = PAGE_MARGIN;
-	const PROJ_COL = 336;
-	const TABLE_HDR_H = 22;
-
-	ensureSpace(TABLE_HDR_H + 20);
-	addRect(page, PAGE_MARGIN, page.y - TABLE_HDR_H, CONTENT_W, TABLE_HDR_H, C_LIGHT_BG);
-	addText(page, 'ОПИСАНИЕ', DESC_COL + 4, page.y - 14, 8, cidByCodePoint, C_MUTED);
-	addText(page, 'ПРОЕКТ', PROJ_COL + 4, page.y - 14, 8, cidByCodePoint, C_MUTED);
-	rtext('СУМА', RIGHT_X, page.y - 14, 8, C_MUTED);
-	page.y -= TABLE_HDR_H;
-
-	for (const line of snapshot.lines) {
-		const descLines = wrapText(line.description, PROJ_COL - DESC_COL - 10, 10, widthByCid, cidByCodePoint);
-		const projLines = wrapText(line.projectName, RIGHT_X - PROJ_COL - 65, 10, widthByCid, cidByCodePoint);
-		const rowLineCount = Math.max(descLines.length, projLines.length);
-		const rowH = rowLineCount * 14 + 10;
-
-		ensureSpace(rowH + 4);
-
-		const rowTopY = page.y - 5;
-		for (let i = 0; i < descLines.length; i++) {
-			addText(page, descLines[i] ?? '', DESC_COL + 4, rowTopY - i * 14, 10, cidByCodePoint);
-		}
-		for (let i = 0; i < projLines.length; i++) {
-			addText(page, projLines[i] ?? '', PROJ_COL + 4, rowTopY - i * 14, 10, cidByCodePoint, C_MUTED);
-		}
-		rtext(formatMoney(line.amountCents, snapshot.currency), RIGHT_X, rowTopY, 10);
-
-		page.y -= rowH;
 		addLine(page, PAGE_MARGIN, page.y + 2, RIGHT_X, page.y + 2, C_BORDER);
-		page.y -= 2;
 	}
 
-	// ── Totals section ───────────────────────────────────────────────────────────
-	page.y -= 12;
-	const TOTALS_L = 360;
+	// ── 4. SUMMARY ────────────────────────────────────────────────────────────
+	page.y -= 10;
+	const SX = PAGE_MARGIN + CONTENT_W / 2;
 
-	function totalsRow(label: string, value: string, size = 10) {
-		ensureSpace(size + 8);
-		addText(page, label, TOTALS_L, page.y, size, cidByCodePoint, C_MUTED);
-		rtext(value, RIGHT_X, page.y, size);
-		page.y -= size + 8;
+	function srow(
+		label: string, val: string,
+		lsz: number, vsz: number,
+		lc: readonly [number, number, number],
+		vc: readonly [number, number, number]
+	) {
+		ensureSpace(lsz + 12);
+		addText(page, label, SX, page.y, lsz, cidByCodePoint, lc);
+		rtext(val, RIGHT_X, page.y, vsz, vc);
+		page.y -= lsz + 10;
 	}
 
-	totalsRow('Нетна сума:', formatMoney(snapshot.netTotalCents, snapshot.currency));
-	totalsRow(`ДДС (${(snapshot.vatRateBasisPoints / 100).toFixed(0)}%):`, formatMoney(snapshot.vatTotalCents, snapshot.currency));
-
-	ensureSpace(20);
-	addLine(page, TOTALS_L, page.y + 4, RIGHT_X, page.y + 4, C_BORDER);
+	srow('Сума без ДДС:', formatMoney(snapshot.netTotalCents, snapshot.currency), 9, 9, C_MUTED, C_BLACK);
+	srow(`ДДС ${(snapshot.vatRateBasisPoints / 100).toFixed(0)}%:`, formatMoney(snapshot.vatTotalCents, snapshot.currency), 9, 9, C_MUTED, C_BLACK);
+	addLine(page, SX, page.y + 5, RIGHT_X, page.y + 5, C_BORDER);
 	page.y -= 4;
+	srow('Общо с ДДС:', formatMoney(snapshot.grossTotalCents, snapshot.currency), 12, 12, C_CHARCOAL, C_CHARCOAL);
 
-	ensureSpace(26);
-	addText(page, 'ОБЩО:', TOTALS_L, page.y, 13, cidByCodePoint);
-	rtext(formatMoney(snapshot.grossTotalCents, snapshot.currency), RIGHT_X, page.y, 13);
-	page.y -= 30;
+	const paid = snapshot.paidTotalCents ?? 0;
+	srow('Платено:', formatMoney(paid, snapshot.currency), 9, 9, C_MUTED, C_MUTED);
 
-	// ── Footer ───────────────────────────────────────────────────────────────────
+	const rem = Math.max(0, snapshot.grossTotalCents - paid);
+	const rc: readonly [number, number, number] = rem > 0 ? C_ERROR : C_SUCCESS;
 	ensureSpace(24);
-	addLine(page, PAGE_MARGIN, page.y + 10, RIGHT_X, page.y + 10, C_BORDER);
-	addText(
-		page,
-		'Документът е генериран и запазен като неизменима версия при издаване.',
-		PAGE_MARGIN,
-		page.y,
-		8,
-		cidByCodePoint,
-		C_MUTED
-	);
+	addRect(page, SX - 4, page.y - 5, RIGHT_X - SX + 4, 20, C_SURFACE_HIGH);
+	srow('Остатък за плащане:', formatMoney(rem, snapshot.currency), 10, 10, rc, rc);
+
+	// ── 5. PAYMENT SLIP ───────────────────────────────────────────────────────
+	if (snapshot.bankName || snapshot.bankIban || snapshot.bankBic) {
+		page.y -= 14;
+		const SH = 86;
+		ensureSpace(SH + 12);
+		const st = page.y;
+		const sb = st - SH;
+
+		// Dashed border rectangle
+		page.commands.push(`[4 3] 0 d ${C_MUTED[0].toFixed(3)} ${C_MUTED[1].toFixed(3)} ${C_MUTED[2].toFixed(3)} RG 0.5 w`);
+		page.commands.push(
+			`${PAGE_MARGIN.toFixed(2)} ${st.toFixed(2)} m ${RIGHT_X.toFixed(2)} ${st.toFixed(2)} l ` +
+			`${RIGHT_X.toFixed(2)} ${sb.toFixed(2)} l ${PAGE_MARGIN.toFixed(2)} ${sb.toFixed(2)} l ` +
+			`${PAGE_MARGIN.toFixed(2)} ${st.toFixed(2)} l S`
+		);
+		page.commands.push('[] 0 d 0 G 1 w');
+
+		addText(page, 'ДАННИ ЗА ПЛАЩАНЕ', PAGE_MARGIN + 8, st - 14, 9, cidByCodePoint, C_CHARCOAL);
+
+		const CW3 = CONTENT_W / 3;
+		const fy = st - 32;
+
+		addText(page, 'БАНКА', PAGE_MARGIN + 8, fy, 7, cidByCodePoint, C_MUTED);
+		if (snapshot.bankName) addText(page, snapshot.bankName, PAGE_MARGIN + 8, fy - 14, 9, cidByCodePoint, C_BLACK);
+
+		addText(page, 'IBAN', PAGE_MARGIN + 8 + CW3, fy, 7, cidByCodePoint, C_MUTED);
+		if (snapshot.bankIban) addText(page, snapshot.bankIban, PAGE_MARGIN + 8 + CW3, fy - 14, 9, cidByCodePoint, C_PRIMARY);
+
+		addText(page, 'BIC/SWIFT', PAGE_MARGIN + 8 + CW3 * 2, fy, 7, cidByCodePoint, C_MUTED);
+		if (snapshot.bankBic) addText(page, snapshot.bankBic, PAGE_MARGIN + 8 + CW3 * 2, fy - 14, 9, cidByCodePoint, C_BLACK);
+
+		const ry = fy - 38;
+		addText(page, 'ОСНОВАНИЕ ЗА ПЛАЩАНЕ', PAGE_MARGIN + 8, ry, 7, cidByCodePoint, C_MUTED);
+		addText(page, `Плащане по фактура №${snapshot.invoiceNumber}`, PAGE_MARGIN + 8, ry - 14, 9, cidByCodePoint, C_BLACK);
+		if (snapshot.dueDate) rtext(`Краен срок: ${snapshot.dueDate}`, RIGHT_X - 8, ry - 14, 8, C_MUTED);
+
+		page.y = sb - 12;
+	}
+
+	// Page numbers (post-pass so total page count is known)
+	const np = pages.length;
+	for (let p = 0; p < pages.length; p++) {
+		const pg = pages[p];
+		const pt = `Page ${p + 1} of ${np}`;
+		const pw = textWidth(pt, 8, widthByCid, cidByCodePoint);
+		pg.commands.push(`${C_MUTED[0].toFixed(3)} ${C_MUTED[1].toFixed(3)} ${C_MUTED[2].toFixed(3)} rg`);
+		pg.commands.push(
+			`BT /F1 8 Tf 1 0 0 1 ${(RIGHT_X - pw).toFixed(2)} ${(PAGE_MARGIN + 4).toFixed(2)} Tm <${encodeTextAsCidHex(pt, cidByCodePoint)}> Tj ET`
+		);
+		pg.commands.push('0 g');
+	}
 
 	return pages;
 }
@@ -696,47 +782,62 @@ export async function generateInvoicePdf(snapshot: InvoicePdfSnapshot) {
 	const fontInfo = await loadFontInfo();
 	const strings = [
 		'ФАКТУРА',
-		'ДАТА НА ИЗДАВАНЕ',
-		'ПАДЕЖ',
-		'ПЕРИОД',
-		'ПЛАЩАНЕ',
-		'ДОСТАВЧИК',
-		'ПОЛУЧАТЕЛ',
-		'ЕИК: ',
-		'ДДС: ',
-		'Адрес: ',
-		'МОЛ: ',
-		'ОПИСАНИЕ',
-		'ПРОЕКТ',
-		'СУМА',
-		'Нетна сума:',
-		'ОБЩО:',
-		'Документът е генериран и запазен като неизменима версия при издаване.',
-		'Няма',
+		'(ОРИГИНАЛ)', '(ЧЕРНОВА)',
+		'НЕПЛАТЕНА', 'ЧЕРНОВА',
+		'Номер:', 'Дата:', 'Падеж:',
+		'ДОСТАВЧИК', 'КЛИЕНТ',
+		'ЕИК/БУЛСТАТ:', 'ДДС №:', 'Адрес:', 'МОЛ:',
+		'Описание', 'ДДС %', 'Сума',
+		'Сума без ДДС:',
+		'Общо с ДДС:',
+		'Платено:',
+		'Остатък за плащане:',
+		'ДАННИ ЗА ПЛАЩАНЕ',
+		'БАНКА', 'IBAN', 'BIC/SWIFT',
+		'ОСНОВАНИЕ ЗА ПЛАЩАНЕ',
+		'Плащане по фактура №',
+		'Краен срок: ',
+		'Page 1 of 1', 'Page 1 of 2', 'Page 2 of 2',
+		'—',
 		formatPaymentMethod(snapshot.paymentMethod),
 		snapshot.invoiceNumber,
 		snapshot.issueDate,
-		snapshot.dueDate ?? 'Няма',
-		formatDateRange(snapshot.servicePeriodFrom, snapshot.servicePeriodTo),
+		snapshot.dueDate ?? '—',
 		snapshot.company.legalName,
 		snapshot.company.registrationNumber ?? '',
 		snapshot.company.vatNumber ?? '',
 		snapshot.company.address ?? '',
 		snapshot.company.molName ?? '',
+		snapshot.company.email ?? '',
+		snapshot.company.phone ?? '',
+		snapshot.company.website ?? '',
 		snapshot.client.legalName,
 		snapshot.client.registrationNumber ?? '',
 		snapshot.client.vatNumber ?? '',
 		snapshot.client.address ?? '',
 		snapshot.client.molName ?? '',
-		...snapshot.lines.flatMap((line) => [
-			line.description,
-			line.projectName,
-			formatMoney(line.amountCents, snapshot.currency)
+		snapshot.bankName ?? '',
+		snapshot.bankIban ?? '',
+		snapshot.bankBic ?? '',
+		`Плащане по фактура №${snapshot.invoiceNumber}`,
+		snapshot.dueDate ? `Краен срок: ${snapshot.dueDate}` : '',
+		`ДДС ${(snapshot.vatRateBasisPoints / 100).toFixed(0)}%:`,
+		`${(snapshot.vatRateBasisPoints / 100).toFixed(0)}%`,
+		'h ', 'min', ' — ',
+		...snapshot.projectGroups.flatMap((group) => [
+			group.projectName,
+			formatMoney(group.netAmountCents, snapshot.currency),
+			...group.tasks.flatMap((task) => [
+				task.description,
+				task.hours != null ? formatHours(task.hours) : '',
+				formatMoney(task.amountCents, snapshot.currency)
+			])
 		]),
 		formatMoney(snapshot.netTotalCents, snapshot.currency),
 		formatMoney(snapshot.vatTotalCents, snapshot.currency),
 		formatMoney(snapshot.grossTotalCents, snapshot.currency),
-		`ДДС (${(snapshot.vatRateBasisPoints / 100).toFixed(0)}%):`
+		formatMoney(snapshot.paidTotalCents ?? 0, snapshot.currency),
+		formatMoney(Math.max(0, snapshot.grossTotalCents - (snapshot.paidTotalCents ?? 0)), snapshot.currency)
 	];
 	const { cidByCodePoint, glyphByCid, widthByCid } = buildFontMaps(fontInfo, strings);
 	const pages = renderInvoicePages(snapshot, cidByCodePoint, widthByCid);

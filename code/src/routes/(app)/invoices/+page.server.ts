@@ -239,6 +239,7 @@ type IssuableDraftSnapshot = {
 		description: string;
 		hourlyUninvoicedValueCents: number | null;
 		flatFeeValueCents: number | null;
+		snapshotJson: import('@prisma/client').Prisma.JsonValue | null;
 		task: {
 			taskList: {
 				project: {
@@ -277,11 +278,24 @@ function buildIssuedSnapshot(
 			address: draft.client.billingAddress,
 			molName: draft.client.mol
 		},
-		lines: draft.taskSelections.map((selection) => ({
-			description: selection.description,
-			projectName: selection.task.taskList.project.name,
-			amountCents: selectionAmount(selection)
-		})),
+		projectGroups: (() => {
+			const map = new Map<string, { tasks: { description: string; hours: number | null; amountCents: number }[]; netAmountCents: number }>();
+			for (const sel of draft.taskSelections) {
+				const pn = sel.task.taskList.project.name;
+				let hours: number | null = null;
+				if (sel.hourlyUninvoicedValueCents != null && sel.snapshotJson && typeof sel.snapshotJson === 'object' && !Array.isArray(sel.snapshotJson)) {
+					const snap = sel.snapshotJson as { timeLogs?: Array<{ durationMinutes?: number }> };
+					const mins = (snap.timeLogs ?? []).reduce((s, t) => s + (t.durationMinutes ?? 0), 0);
+					if (mins > 0) hours = mins / 60;
+				}
+				const amt = selectionAmount(sel);
+				if (!map.has(pn)) map.set(pn, { tasks: [], netAmountCents: 0 });
+				const g = map.get(pn)!;
+				g.tasks.push({ description: sel.description, hours, amountCents: amt });
+				g.netAmountCents += amt;
+			}
+			return Array.from(map.entries()).map(([projectName, d]) => ({ projectName, tasks: d.tasks, netAmountCents: d.netAmountCents }));
+		})(),
 		netTotalCents: draft.netTotalCents,
 		vatTotalCents: draft.vatTotalCents,
 		grossTotalCents: draft.grossTotalCents,

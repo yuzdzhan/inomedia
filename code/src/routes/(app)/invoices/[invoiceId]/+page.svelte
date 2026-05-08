@@ -1,11 +1,10 @@
 <script lang="ts">
-	import type { PageData } from './$types';
+	import type { ActionData, PageData } from './$types';
 	import Icon from '$lib/components/Icon.svelte';
 	import { fmtDate } from '$lib/utils/format';
 
-	let { data }: { data: PageData } = $props();
+	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	// Build a unified view object — snapshot for issued invoices, live data for drafts
 	const view = $derived(() => {
 		const { invoice, company, snapshot } = data;
 		if (snapshot) return { ...snapshot, issueDate: snapshot.issueDate as string | null };
@@ -31,11 +30,18 @@
 				address: invoice.client.billingAddress,
 				molName: (invoice.client as Record<string, unknown>).mol as string | null ?? null
 			},
-			lines: invoice.taskSelections.map((sel: typeof invoice.taskSelections[number]) => ({
-				description: sel.description,
-				projectName: sel.task.taskList.project.name,
-				amountCents: sel.hourlyUninvoicedValueCents ?? sel.flatFeeValueCents ?? 0
-			})),
+			projectGroups: (() => {
+				const map = new Map<string, { tasks: { description: string; amountCents: number }[]; netAmountCents: number }>();
+				for (const sel of invoice.taskSelections) {
+					const pn = sel.task.taskList.project.name;
+					const amt = sel.hourlyUninvoicedValueCents ?? sel.flatFeeValueCents ?? 0;
+					if (!map.has(pn)) map.set(pn, { tasks: [], netAmountCents: 0 });
+					const g = map.get(pn)!;
+					g.tasks.push({ description: sel.description, amountCents: amt });
+					g.netAmountCents += amt;
+				}
+				return Array.from(map.entries()).map(([projectName, d]) => ({ projectName, tasks: d.tasks, netAmountCents: d.netAmountCents }));
+			})(),
 			netTotalCents: invoice.netTotalCents,
 			vatTotalCents: invoice.vatTotalCents,
 			grossTotalCents: invoice.grossTotalCents,
@@ -50,17 +56,6 @@
 		});
 	}
 
-	function fmtPaymentMethod(method: string) {
-		return method === 'cash' ? 'В брой' : 'Банков превод';
-	}
-
-	function fmtDateRange(from: string | null, to: string | null) {
-		if (from && to) return `${from} – ${to}`;
-		if (from) return from;
-		if (to) return to;
-		return '—';
-	}
-
 	const statusLabels: Record<string, string> = {
 		issued: 'Издадена',
 		partially_paid: 'Частично платена',
@@ -69,6 +64,18 @@
 		draft: 'Чернова',
 		voided: 'Анулирана'
 	};
+
+	function docStatusClass(status: string) {
+		const map: Record<string, string> = {
+			draft: 'doc-badge-draft',
+			issued: 'doc-badge-unpaid',
+			partially_paid: 'doc-badge-partial',
+			overdue: 'doc-badge-overdue',
+			paid: 'doc-badge-paid',
+			voided: 'doc-badge-voided'
+		};
+		return map[status] ?? 'doc-badge-unpaid';
+	}
 
 	function statusClass(status: string) {
 		const map: Record<string, string> = {
@@ -84,8 +91,23 @@
 
 	const invoice = $derived(data.invoice);
 	const company = $derived(data.company);
-	const hasPdf = $derived(invoice.status === 'issued' || invoice.status === 'paid' ||
-		invoice.status === 'partially_paid' || invoice.status === 'overdue');
+	const hasPdf = $derived(
+		invoice.status === 'issued' ||
+		invoice.status === 'paid' ||
+		invoice.status === 'partially_paid' ||
+		invoice.status === 'overdue'
+	);
+	const remainingDueCents = $derived(Math.max(0, view().grossTotalCents - invoice.paidTotalCents));
+	const isDraft = $derived(invoice.status === 'draft');
+
+	function dateVal(d: Date | string | null | undefined) {
+		if (!d) return '';
+		return new Date(d).toISOString().slice(0, 10);
+	}
+
+	function lineAmount(sel: { hourlyUninvoicedValueCents: number | null; flatFeeValueCents: number | null }) {
+		return sel.hourlyUninvoicedValueCents ?? sel.flatFeeValueCents ?? 0;
+	}
 </script>
 
 <svelte:head>
@@ -107,6 +129,9 @@
 	</div>
 	<div class="page-header-actions">
 		{#if invoice.status === 'draft'}
+			<button class="btn btn-secondary btn-sm" onclick={() => window.print()}>
+				<Icon name="printer" size={13} />Печат
+			</button>
 			<a href="/invoices/{invoice.id}/preview-pdf" target="_blank" class="btn btn-secondary btn-sm">
 				<Icon name="file" size={13} />Преглед PDF
 			</a>
@@ -119,134 +144,257 @@
 	</div>
 </div>
 
+<!-- Draft management panel -->
+{#if isDraft}
+<div class="card draft-panel">
+	<div class="card-header">
+		<h2 class="card-title">Управление на чернова</h2>
+		{#if (form as any)?.draftSuccess}
+			<span style="font-size:12px; color:var(--success);">{(form as any).draftSuccess}</span>
+		{/if}
+	</div>
+	{#if (form as any)?.draftError}
+		<div class="alert danger" style="margin:0 16px 12px;">{(form as any).draftError}</div>
+	{/if}
+	<form method="POST" style="padding:16px;">
+		<div style="display:grid; grid-template-columns:160px 160px 160px; gap:12px; margin-bottom:16px;">
+			<div class="field">
+				<label class="label" for="spFrom">Период от</label>
+				<input class="input" id="spFrom" name="servicePeriodFrom" type="date" value={dateVal(invoice.servicePeriodFrom)} />
+			</div>
+			<div class="field">
+				<label class="label" for="spTo">Период до</label>
+				<input class="input" id="spTo" name="servicePeriodTo" type="date" value={dateVal(invoice.servicePeriodTo)} />
+			</div>
+			<div class="field">
+				<label class="label" for="due">Падеж</label>
+				<input class="input" id="due" name="dueDate" type="date" value={dateVal(invoice.dueDate)} />
+			</div>
+		</div>
+
+		<div style="border:1px solid var(--border); border-radius:var(--r-md); overflow:hidden; margin-bottom:16px;">
+			{#each invoice.taskSelections as sel, idx}
+				<div style="padding:10px 14px; border-top:{idx > 0 ? '1px solid var(--border-soft)' : 'none'};">
+					<div class="row-between" style="margin-bottom:6px;">
+						<span style="font-weight:500; font-size:13px;">{sel.task.title}</span>
+						<span class="amount" style="font-weight:500;">{fmtMoney(lineAmount(sel))} {company.currency}</span>
+					</div>
+					<div class="muted" style="font-size:12px; margin-bottom:6px;">{sel.task.taskList.project.name}</div>
+					<div class="field" style="margin:0;">
+						<label class="label" for="desc-{sel.id}" style="font-size:10px;">Описание на реда</label>
+						<textarea class="input textarea" id="desc-{sel.id}" name="description:{sel.id}" rows="2" style="font-size:12px; resize:none;">{sel.description}</textarea>
+					</div>
+				</div>
+			{/each}
+		</div>
+
+		<div class="row gap-2">
+			<button class="btn btn-primary btn-sm" type="submit" formaction="?/issueDraft">
+				<Icon name="check" size={13} />Издай фактура
+			</button>
+			<button class="btn btn-secondary btn-sm" type="submit" formaction="?/saveDraft">Запази</button>
+			<button class="btn btn-ghost btn-sm" type="submit" formaction="?/recalculateDraft">
+				<Icon name="refresh" size={13} />Преизчисли
+			</button>
+			<a href="/invoices/{invoice.id}/preview-pdf" target="_blank" class="btn btn-ghost btn-sm">
+				<Icon name="file" size={13} />Регенерирай PDF
+			</a>
+		</div>
+	</form>
+</div>
+{/if}
+
 <!-- Invoice document preview -->
-<div class="inv-doc-wrap">
+<div class="inv-wrap">
 	<div class="inv-doc">
 
-		<!-- ── Header ─────────────────────────────────────────────────────────── -->
-		<div class="inv-header">
+		<!-- 1. Header -->
+		<header class="inv-header">
 			<div class="inv-header-left">
-				<div class="inv-title">ФАКТУРА</div>
-				<div class="inv-number">{view().invoiceNumber}</div>
+				<h1 class="inv-company-name">{view().company.legalName}</h1>
+				{#if company.email}<p class="inv-company-detail">{company.email}</p>{/if}
+				{#if company.phone}<p class="inv-company-detail">{company.phone}</p>{/if}
+				{#if company.website}<p class="inv-company-detail">{company.website}</p>{/if}
 			</div>
 			<div class="inv-header-right">
-				<div class="inv-company-name">{view().company.legalName}</div>
-				{#if view().company.vatNumber}
-					<div class="inv-company-sub">ДДС: {view().company.vatNumber}</div>
-				{:else if view().company.registrationNumber}
-					<div class="inv-company-sub">ЕИК: {view().company.registrationNumber}</div>
-				{/if}
+				<h2 class="inv-doc-title">ФАКТУРА</h2>
+				<p class="inv-doc-subtitle">{isDraft ? '(ЧЕРНОВА)' : '(ОРИГИНАЛ)'}</p>
+				<div class="inv-meta-grid">
+					<span class="inv-mk">Номер:</span>
+					<span class="inv-mv">{view().invoiceNumber}</span>
+					<span class="inv-mk">Дата:</span>
+					<span class="inv-mv">{view().issueDate ?? '—'}</span>
+					<span class="inv-mk">Падеж:</span>
+					<span class="inv-mv">{view().dueDate ?? '—'}</span>
+				</div>
+				<div class="inv-doc-badge {docStatusClass(invoice.status)}">
+					{statusLabels[invoice.status] ?? invoice.status}
+				</div>
 			</div>
-		</div>
+		</header>
 
-		<!-- ── Metadata row ───────────────────────────────────────────────────── -->
-		<div class="inv-meta">
-			<div class="inv-meta-item">
-				<div class="inv-meta-label">ДАТА НА ИЗДАВАНЕ</div>
-				<div class="inv-meta-value">{view().issueDate ?? '—'}</div>
-			</div>
-			<div class="inv-meta-item">
-				<div class="inv-meta-label">ПАДЕЖ</div>
-				<div class="inv-meta-value">{view().dueDate ?? '—'}</div>
-			</div>
-			<div class="inv-meta-item">
-				<div class="inv-meta-label">ПЕРИОД</div>
-				<div class="inv-meta-value">{fmtDateRange(view().servicePeriodFrom, view().servicePeriodTo)}</div>
-			</div>
-			<div class="inv-meta-item">
-				<div class="inv-meta-label">ПЛАЩАНЕ</div>
-				<div class="inv-meta-value">{fmtPaymentMethod(view().paymentMethod)}</div>
-			</div>
-		</div>
-
-		<div class="inv-divider"></div>
-
-		<!-- ── Party columns ─────────────────────────────────────────────────── -->
-		<div class="inv-parties">
+		<!-- 2. Legal Info Grid -->
+		<div class="inv-legal">
 			<div class="inv-party">
-				<div class="inv-party-label">ДОСТАВЧИК</div>
-				<div class="inv-party-name">{view().company.legalName}</div>
-				{#if view().company.registrationNumber}
-					<div class="inv-party-row"><span class="inv-party-key">ЕИК:</span> {view().company.registrationNumber}</div>
-				{/if}
-				{#if view().company.vatNumber}
-					<div class="inv-party-row"><span class="inv-party-key">ДДС:</span> {view().company.vatNumber}</div>
-				{/if}
-				{#if view().company.address}
-					<div class="inv-party-row"><span class="inv-party-key">Адрес:</span> {view().company.address}</div>
-				{/if}
-				{#if view().company.molName}
-					<div class="inv-party-row"><span class="inv-party-key">МОЛ:</span> {view().company.molName}</div>
-				{/if}
+				<h3 class="inv-section-title">ДОСТАВЧИК</h3>
+				<div class="inv-fields">
+					<span class="inv-fk">Фирма:</span>
+					<span class="inv-fv">{view().company.legalName}</span>
+					{#if view().company.registrationNumber}
+						<span class="inv-fk">ЕИК/БУЛСТАТ:</span>
+						<span class="inv-fv inv-fv-num">{view().company.registrationNumber}</span>
+					{/if}
+					{#if view().company.vatNumber}
+						<span class="inv-fk">ДДС №:</span>
+						<span class="inv-fv inv-fv-num">{view().company.vatNumber}</span>
+					{/if}
+					{#if view().company.address}
+						<span class="inv-fk">Адрес:</span>
+						<span class="inv-fv">{view().company.address}</span>
+					{/if}
+					{#if view().company.molName}
+						<span class="inv-fk">МОЛ:</span>
+						<span class="inv-fv">{view().company.molName}</span>
+					{/if}
+				</div>
 			</div>
 			<div class="inv-party">
-				<div class="inv-party-label">ПОЛУЧАТЕЛ</div>
-				<div class="inv-party-name">{view().client.legalName}</div>
-				{#if view().client.registrationNumber}
-					<div class="inv-party-row"><span class="inv-party-key">ЕИК:</span> {view().client.registrationNumber}</div>
-				{/if}
-				{#if view().client.vatNumber}
-					<div class="inv-party-row"><span class="inv-party-key">ДДС:</span> {view().client.vatNumber}</div>
-				{/if}
-				{#if view().client.address}
-					<div class="inv-party-row"><span class="inv-party-key">Адрес:</span> {view().client.address}</div>
-				{/if}
-				{#if view().client.molName}
-					<div class="inv-party-row"><span class="inv-party-key">МОЛ:</span> {view().client.molName}</div>
-				{/if}
+				<h3 class="inv-section-title">КЛИЕНТ</h3>
+				<div class="inv-fields">
+					<span class="inv-fk">Фирма:</span>
+					<span class="inv-fv inv-fv-bold">{view().client.legalName}</span>
+					{#if view().client.registrationNumber}
+						<span class="inv-fk">ЕИК/БУЛСТАТ:</span>
+						<span class="inv-fv inv-fv-num">{view().client.registrationNumber}</span>
+					{/if}
+					{#if view().client.vatNumber}
+						<span class="inv-fk">ДДС №:</span>
+						<span class="inv-fv inv-fv-num">{view().client.vatNumber}</span>
+					{/if}
+					{#if view().client.address}
+						<span class="inv-fk">Адрес:</span>
+						<span class="inv-fv">{view().client.address}</span>
+					{/if}
+					{#if view().client.molName}
+						<span class="inv-fk">МОЛ:</span>
+						<span class="inv-fv">{view().client.molName}</span>
+					{/if}
+				</div>
 			</div>
 		</div>
 
-		<div class="inv-divider"></div>
-
-		<!-- ── Line items table ──────────────────────────────────────────────── -->
-		<table class="inv-table">
-			<thead>
-				<tr>
-					<th class="inv-th inv-th-desc">ОПИСАНИЕ</th>
-					<th class="inv-th inv-th-proj">ПРОЕКТ</th>
-					<th class="inv-th inv-th-amt">СУМА</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each view().lines as line}
-					<tr class="inv-tr">
-						<td class="inv-td inv-td-desc">{line.description}</td>
-						<td class="inv-td inv-td-proj">{line.projectName}</td>
-						<td class="inv-td inv-td-amt">{fmtMoney(line.amountCents)} {view().currency}</td>
+		<!-- 3. Items Table -->
+		<div class="inv-table-wrap">
+			<table class="inv-table">
+				<thead>
+					<tr>
+						<th class="inv-th inv-th-num">№</th>
+						<th class="inv-th inv-th-desc">Описание</th>
+						<th class="inv-th inv-th-vat">VAT %</th>
+						<th class="inv-th inv-th-total">Сума ({view().currency})</th>
 					</tr>
-				{/each}
-			</tbody>
-		</table>
+				</thead>
+				<tbody>
+					{#each view().projectGroups as group, gi}
+						<tr class="inv-tr inv-tr-project {gi % 2 === 0 ? 'inv-tr-surface' : 'inv-tr-alt'}">
+							<td class="inv-td inv-td-num">{gi + 1}</td>
+							<td class="inv-td inv-td-desc inv-td-project">{group.projectName}</td>
+							<td class="inv-td inv-td-vat">{(view().vatRateBasisPoints / 100).toFixed(0)}%</td>
+							<td class="inv-td inv-td-total">{fmtMoney(group.netAmountCents)}</td>
+						</tr>
+						{#each group.tasks as task}
+							<tr class="inv-tr inv-tr-task">
+								<td class="inv-td inv-td-num"></td>
+								<td class="inv-td inv-td-desc inv-td-task-desc">{task.description}</td>
+								<td class="inv-td"></td>
+								<td class="inv-td inv-td-total inv-td-task-total">{fmtMoney(task.amountCents)}</td>
+							</tr>
+						{/each}
+					{/each}
+				</tbody>
+			</table>
+		</div>
 
-		<!-- ── Totals ────────────────────────────────────────────────────────── -->
-		<div class="inv-totals">
-			<div class="inv-totals-row">
-				<span class="inv-totals-label">Нетна сума</span>
-				<span class="inv-totals-value">{fmtMoney(view().netTotalCents)} {view().currency}</span>
-			</div>
-			<div class="inv-totals-row">
-				<span class="inv-totals-label">ДДС ({(view().vatRateBasisPoints / 100).toFixed(0)}%)</span>
-				<span class="inv-totals-value">{fmtMoney(view().vatTotalCents)} {view().currency}</span>
-			</div>
-			<div class="inv-totals-divider"></div>
-			<div class="inv-totals-row inv-totals-grand">
-				<span class="inv-totals-label">ОБЩО</span>
-				<span class="inv-totals-value">{fmtMoney(view().grossTotalCents)} {view().currency}</span>
+		<!-- 4. Summary Card -->
+		<div class="inv-summary-wrap">
+			<div class="inv-summary">
+				<div class="inv-sum-row inv-sum-sep">
+					<span class="inv-sum-label">Сума без ДДС:</span>
+					<span class="inv-sum-val">{fmtMoney(view().netTotalCents)} {view().currency}</span>
+				</div>
+				<div class="inv-sum-row inv-sum-sep">
+					<span class="inv-sum-label">ДДС {(view().vatRateBasisPoints / 100).toFixed(0)}%:</span>
+					<span class="inv-sum-val">{fmtMoney(view().vatTotalCents)} {view().currency}</span>
+				</div>
+				<div class="inv-sum-grand">
+					<span class="inv-sum-grand-label">Общо с ДДС:</span>
+					<span class="inv-sum-grand-val">{fmtMoney(view().grossTotalCents)} {view().currency}</span>
+				</div>
+				<div class="inv-sum-row inv-sum-muted">
+					<span class="inv-sum-sm-label">Платено:</span>
+					<span class="inv-sum-sm-val">{fmtMoney(invoice.paidTotalCents)} {view().currency}</span>
+				</div>
+				<div class="inv-sum-due {remainingDueCents === 0 ? 'inv-sum-due-zero' : ''}">
+					<span>Остатък за плащане:</span>
+					<span>{fmtMoney(remainingDueCents)} {view().currency}</span>
+				</div>
 			</div>
 		</div>
 
-		<!-- ── Footer ────────────────────────────────────────────────────────── -->
-		<div class="inv-footer">
-			Документът е генериран и запазен като неизменима версия при издаване.
-		</div>
+		<!-- 5. Footer (bank details + page info) -->
+		<footer class="inv-footer">
+			<div class="inv-bank">
+				<div class="inv-bank-head">
+					<h3 class="inv-bank-title">
+						<svg class="inv-bank-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+							<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17.93V18c0-.55-.45-1-1-1s-1 .45-1 1v1.93C7.06 19.44 4.56 16.94 4.07 14H6c.55 0 1-.45 1-1s-.45-1-1-1H4.07C4.56 8.06 7.06 5.56 10 5.07V7c0 .55.45 1 1 1s1-.45 1-1V5.07C16.94 5.56 19.44 8.06 19.93 11H18c-.55 0-1 .45-1 1s.45 1 1 1h1.93c-.49 2.94-2.99 5.44-5.93 5.93z"/>
+						</svg>
+						ДАННИ ЗА ПЛАЩАНЕ
+					</h3>
+					<span class="inv-bank-subtitle">Платежно нареждане</span>
+				</div>
+				<div class="inv-bank-grid">
+					{#if company.bankName}
+					<div class="inv-bank-field">
+						<span class="inv-bk">Банка</span>
+						<span class="inv-bv">{company.bankName}</span>
+					</div>
+					{/if}
+					{#if company.bankIban}
+					<div class="inv-bank-field">
+						<span class="inv-bk">IBAN</span>
+						<span class="inv-bv inv-bv-iban">{company.bankIban}</span>
+					</div>
+					{/if}
+					{#if company.bankBic}
+					<div class="inv-bank-field">
+						<span class="inv-bk">BIC/SWIFT</span>
+						<span class="inv-bv">{company.bankBic}</span>
+					</div>
+					{/if}
+					<div class="inv-bank-field">
+						<span class="inv-bk">Получател</span>
+						<span class="inv-bv">{view().company.legalName}</span>
+					</div>
+					<div class="inv-bank-field inv-bank-wide">
+						<span class="inv-bk">Основание за плащане</span>
+						<span class="inv-bv inv-bv-ref">Плащане по фактура №{view().invoiceNumber}</span>
+					</div>
+				</div>
+				<div class="inv-bank-footer">
+					<p>Please use the exact reference provided to ensure automatic processing.</p>
+					{#if view().dueDate}<p>Deadline: {view().dueDate}</p>{/if}
+				</div>
+			</div>
+			<div class="inv-page-num">Page 1 of 1</div>
+		</footer>
 
 	</div>
 </div>
 
 <!-- Payments panel (if any) -->
 {#if invoice.payments && invoice.payments.length > 0}
-	<div class="card" style="margin-top:20px; max-width:760px;">
+	<div class="card payments-section" style="margin-top:20px; max-width:820px;">
 		<div class="card-header">
 			<h2 class="card-title">Плащания</h2>
 		</div>
@@ -265,7 +413,7 @@
 						<td class="amount muted">{fmtDate(p.paymentDate)}</td>
 						<td>{p.paymentMethod === 'cash' ? 'В брой' : 'Банков превод'}</td>
 						<td class="muted">{p.notes ?? '—'}</td>
-						<td class="num amount" style="font-weight:500;">{fmtMoney(p.amountCents)} {company.currency}</td>
+						<td class="num amount" style="font-weight:500;">{(p.amountCents / 100).toFixed(2)} {company.currency}</td>
 					</tr>
 				{/each}
 			</tbody>
@@ -274,212 +422,410 @@
 {/if}
 
 <style>
-	.inv-doc-wrap {
-		background: var(--surface);
-		border-radius: var(--r-lg);
-		padding: 32px;
+	/* ── Document wrapper ─────────────────────────────────────────────────── */
+	.inv-wrap {
 		max-width: 820px;
+		background: #f3f4f6;
+		border-radius: 8px;
+		padding: 24px;
 	}
 
 	.inv-doc {
-		background: #fff;
-		border: 1px solid var(--border);
-		border-radius: var(--r-md);
-		overflow: hidden;
-		font-size: 13px;
+		background: #ffffff;
+		border: 1px solid #E5E7EB;
+		border-radius: 2px;
+		padding: 20mm 15mm;
+		font-family: 'Open Sans', sans-serif;
 		color: #1d1b20;
-	}
-
-	/* Header */
-	.inv-header {
-		background: #4f378a;
 		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		padding: 20px 28px 18px;
-		gap: 16px;
+		flex-direction: column;
 	}
 
-	.inv-title {
-		font-size: 20px;
-		font-weight: 700;
-		color: #fff;
-		letter-spacing: 0.04em;
-		line-height: 1.2;
+	/* ── 1. Header ─────────────────────────────────────────────────────────── */
+	.inv-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-start;
+		margin-bottom: 32px;
+		padding-bottom: 24px;
+		border-bottom: 1px solid #E5E7EB;
 	}
-	.inv-number {
-		font-size: 11px;
-		color: #cdbfff;
-		margin-top: 4px;
-		font-variant-numeric: tabular-nums;
+
+	.inv-header-left {
+		width: 50%;
+	}
+
+	.inv-company-name {
+		font-family: 'Montserrat', sans-serif;
+		font-size: 18px;
+		font-weight: 600;
+		letter-spacing: -0.01em;
+		line-height: 24px;
+		color: #4f378a;
+		margin: 0 0 4px 0;
+	}
+
+	.inv-company-detail {
+		font-size: 12px;
+		line-height: 18px;
+		color: #494551;
+		margin: 0;
 	}
 
 	.inv-header-right {
+		width: 50%;
 		text-align: right;
-		flex-shrink: 0;
-	}
-	.inv-company-name {
-		font-size: 13px;
-		font-weight: 600;
-		color: #fff;
-	}
-	.inv-company-sub {
-		font-size: 10px;
-		color: #cdbfff;
-		margin-top: 3px;
 	}
 
-	/* Metadata strip */
-	.inv-meta {
-		display: grid;
-		grid-template-columns: repeat(4, 1fr);
-		gap: 0;
-		padding: 16px 28px 14px;
-		border-bottom: 1px solid #e5e7eb;
-	}
-	.inv-meta-label {
-		font-size: 8px;
+	.inv-doc-title {
+		font-family: 'Montserrat', sans-serif;
+		font-size: 24px;
 		font-weight: 700;
-		letter-spacing: 0.08em;
-		color: #6f7380;
-		text-transform: uppercase;
-		margin-bottom: 3px;
+		letter-spacing: -0.02em;
+		line-height: 32px;
+		color: #334155;
+		margin: 0 0 4px 0;
 	}
-	.inv-meta-value {
+
+	.inv-doc-subtitle {
+		font-family: 'Montserrat', sans-serif;
+		font-size: 18px;
+		font-weight: 700;
+		letter-spacing: -0.01em;
+		color: #494551;
+		text-transform: uppercase;
+		margin: 0 0 8px 0;
+	}
+
+	.inv-meta-grid {
+		display: grid;
+		grid-template-columns: auto auto;
+		gap: 4px 8px;
+		justify-content: end;
+		margin-bottom: 4px;
+	}
+
+	.inv-mk {
+		font-family: 'Open Sans', sans-serif;
 		font-size: 11px;
+		font-weight: 700;
+		letter-spacing: 0.02em;
+		color: #494551;
+		text-align: right;
+	}
+
+	.inv-mv {
+		font-family: 'Open Sans', sans-serif;
+		font-size: 13px;
+		font-weight: 600;
 		color: #1d1b20;
+		text-align: right;
 		font-variant-numeric: tabular-nums;
 	}
 
-	/* Divider */
-	.inv-divider {
-		height: 1px;
-		background: #e5e7eb;
-		margin: 0 28px;
+	.inv-doc-badge {
+		display: inline-block;
+		margin-top: 16px;
+		padding: 4px 8px;
+		border-radius: 2px;
+		font-family: 'Open Sans', sans-serif;
+		font-size: 11px;
+		font-weight: 700;
+		letter-spacing: 0.02em;
+		text-transform: uppercase;
 	}
 
-	/* Party columns */
-	.inv-parties {
+	.doc-badge-unpaid   { background: #c9a74d; color: #503d00; }
+	.doc-badge-draft    { background: #f2ecf4; color: #4f378a; }
+	.doc-badge-partial  { background: #fed7aa; color: #7c2d12; }
+	.doc-badge-overdue  { background: #fee2e2; color: #7f1d1d; }
+	.doc-badge-paid     { background: #dcfce7; color: #15803d; }
+	.doc-badge-voided   { background: #e5e7eb; color: #374151; }
+
+	/* ── 2. Legal Info Grid ────────────────────────────────────────────────── */
+	.inv-legal {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
 		gap: 24px;
-		padding: 18px 28px 20px;
-	}
-	.inv-party-label {
-		font-size: 8px;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: #6f7380;
-		margin-bottom: 6px;
-	}
-	.inv-party-name {
-		font-size: 13px;
-		font-weight: 600;
-		color: #1d1b20;
-		margin-bottom: 5px;
-	}
-	.inv-party-row {
-		font-size: 11px;
-		color: #1d1b20;
-		line-height: 1.6;
-	}
-	.inv-party-key {
-		color: #6f7380;
-		font-size: 10px;
+		margin-bottom: 32px;
 	}
 
-	/* Table */
+	.inv-section-title {
+		font-family: 'Montserrat', sans-serif;
+		font-size: 14px;
+		font-weight: 600;
+		line-height: 20px;
+		color: #334155;
+		border-bottom: 1px solid #E5E7EB;
+		padding-bottom: 4px;
+		margin: 0 0 8px 0;
+	}
+
+	.inv-fields {
+		display: grid;
+		grid-template-columns: 100px 1fr;
+		gap: 4px 0;
+		font-size: 12px;
+		line-height: 18px;
+	}
+
+	.inv-fk {
+		font-size: 11px;
+		font-weight: 700;
+		letter-spacing: 0.02em;
+		color: #494551;
+		padding-right: 8px;
+	}
+
+	.inv-fv        { color: #1d1b20; }
+	.inv-fv-num    { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+	.inv-fv-bold   { font-weight: 600; }
+
+	/* ── 3. Items Table ─────────────────────────────────────────────────────── */
+	.inv-table-wrap {
+		margin-bottom: 32px;
+		flex-grow: 1;
+	}
+
 	.inv-table {
 		width: 100%;
 		border-collapse: collapse;
-		margin: 0;
 	}
-	.inv-th {
-		background: #f9fafb;
-		font-size: 8px;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: #6f7380;
-		padding: 8px 10px;
-		text-align: left;
-		border-top: 1px solid #e5e7eb;
-		border-bottom: 1px solid #e5e7eb;
-	}
-	.inv-th-desc { width: 55%; padding-left: 28px; }
-	.inv-th-proj { width: 25%; }
-	.inv-th-amt  { width: 20%; text-align: right; padding-right: 28px; }
 
-	.inv-tr:not(:last-child) td {
-		border-bottom: 1px solid #f0f1f3;
+	.inv-th {
+		background: #F9FAFB;
+		font-family: 'Open Sans', sans-serif;
+		font-size: 11px;
+		font-weight: 700;
+		letter-spacing: 0.02em;
+		color: #494551;
+		padding: 8px;
+		text-align: left;
+		border-top: 1px solid #E5E7EB;
+		border-bottom: 1px solid #E5E7EB;
 	}
+
+	.inv-th-num   { width: 36px; text-align: center; }
+	.inv-th-desc  { width: auto; }
+	.inv-th-vat   { width: 64px; text-align: right; }
+	.inv-th-total { width: 100px; text-align: right; }
+
+	.inv-tr { border-bottom: 1px solid #ece6ee; }
+	.inv-tr-alt     { background: #f8f2fa; }
+	.inv-tr-surface { background: #ece6ee; }
 
 	.inv-td {
-		padding: 10px 10px;
+		font-family: 'Open Sans', sans-serif;
 		font-size: 12px;
+		line-height: 18px;
+		color: #1d1b20;
+		padding: 8px;
 		vertical-align: top;
-		line-height: 1.5;
-	}
-	.inv-td-desc { padding-left: 28px; }
-	.inv-td-proj { color: #6f7380; }
-	.inv-td-amt  {
-		text-align: right;
-		padding-right: 28px;
-		font-variant-numeric: tabular-nums;
-		white-space: nowrap;
 	}
 
-	/* Totals */
-	.inv-totals {
+	.inv-td-num   { text-align: center; }
+	.inv-td-vat   { text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+	.inv-td-total { text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+	.inv-td-project   { font-weight: 600; }
+	.inv-td-task-desc { font-size: 11px; color: #494551; padding-top: 4px; padding-bottom: 4px; padding-left: 20px; }
+	.inv-td-task-total { font-size: 11px; font-weight: 400; color: #494551; padding-top: 4px; padding-bottom: 4px; }
+
+	/* ── 4. Summary Card ────────────────────────────────────────────────────── */
+	.inv-summary-wrap {
+		display: flex;
+		justify-content: flex-end;
+		margin-bottom: 32px;
+	}
+
+	.inv-summary {
+		width: 300px;
+		font-family: 'Open Sans', sans-serif;
+	}
+
+	.inv-sum-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		padding: 4px 0;
+	}
+
+	.inv-sum-sep { border-bottom: 1px solid #E5E7EB; }
+	.inv-sum-muted { color: #494551; }
+
+	.inv-sum-label { font-size: 12px; color: #494551; }
+	.inv-sum-val   { font-size: 13px; font-weight: 600; color: #1d1b20; font-variant-numeric: tabular-nums; }
+
+	.inv-sum-grand {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		padding: 8px 0;
+		margin-top: 4px;
+	}
+
+	.inv-sum-grand-label {
+		font-family: 'Montserrat', sans-serif;
+		font-size: 18px;
+		font-weight: 600;
+		letter-spacing: -0.01em;
+		color: #334155;
+	}
+
+	.inv-sum-grand-val {
+		font-family: 'Montserrat', sans-serif;
+		font-size: 18px;
+		font-weight: 600;
+		letter-spacing: -0.01em;
+		color: #334155;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.inv-sum-sm-label { font-size: 10px; color: #494551; }
+	.inv-sum-sm-val   { font-size: 13px; font-weight: 600; color: #1d1b20; font-variant-numeric: tabular-nums; }
+
+	.inv-sum-due {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		padding: 4px 8px;
+		background: #ece6ee;
+		border-radius: 2px;
+		margin-top: 4px;
+		font-family: 'Montserrat', sans-serif;
+		font-size: 14px;
+		font-weight: 600;
+		color: #ba1a1a;
+	}
+
+	.inv-sum-due.inv-sum-due-zero { color: #15803d; background: #dcfce7; }
+
+	/* ── 5. Footer ──────────────────────────────────────────────────────────── */
+	.inv-footer {
+		margin-top: auto;
+		padding-top: 24px;
+		border-top: 1px solid #E5E7EB;
+	}
+
+	/* Bank block */
+	.inv-bank {
+		background: #f8f2fa;
+		border: 2px dashed #cbc4d2;
+		border-radius: 2px;
+		padding: 16px;
+		margin-bottom: 24px;
+	}
+
+	.inv-bank-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 16px;
+	}
+
+	.inv-bank-title {
+		font-family: 'Montserrat', sans-serif;
+		font-size: 14px;
+		font-weight: 600;
+		color: #334155;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin: 0;
+	}
+
+	.inv-bank-icon {
+		width: 18px;
+		height: 18px;
+		color: #334155;
+		flex-shrink: 0;
+	}
+
+	.inv-bank-subtitle {
+		font-size: 10px;
+		font-weight: 700;
+		letter-spacing: 0.02em;
+		color: #494551;
+	}
+
+	.inv-bank-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr 1fr;
+		gap: 16px 32px;
+		font-size: 12px;
+	}
+
+	.inv-bank-field {
 		display: flex;
 		flex-direction: column;
-		align-items: flex-end;
-		padding: 16px 28px 20px;
-		gap: 6px;
-	}
-	.inv-totals-row {
-		display: flex;
-		gap: 32px;
-		align-items: baseline;
-		min-width: 260px;
-		justify-content: space-between;
-	}
-	.inv-totals-label {
-		font-size: 11px;
-		color: #6f7380;
-	}
-	.inv-totals-value {
-		font-size: 12px;
-		font-variant-numeric: tabular-nums;
-		color: #1d1b20;
-		text-align: right;
-		min-width: 120px;
-	}
-	.inv-totals-divider {
-		width: 260px;
-		height: 1px;
-		background: #e5e7eb;
-		margin: 4px 0;
-	}
-	.inv-totals-grand .inv-totals-label {
-		font-size: 13px;
-		font-weight: 600;
-		color: #1d1b20;
-		letter-spacing: 0.04em;
-	}
-	.inv-totals-grand .inv-totals-value {
-		font-size: 14px;
-		font-weight: 700;
-		color: #4f378a;
+		gap: 2px;
 	}
 
-	/* Footer */
-	.inv-footer {
-		border-top: 1px solid #e5e7eb;
-		padding: 12px 28px;
-		font-size: 9px;
-		color: #9ca3af;
+	.inv-bank-wide { grid-column: span 2; }
+
+	.inv-bk {
+		font-size: 11px;
+		font-weight: 700;
+		letter-spacing: 0.02em;
+		color: #494551;
+		text-transform: uppercase;
+	}
+
+	.inv-bv {
+		font-weight: 600;
+		color: #1d1b20;
+	}
+
+	.inv-bv-iban {
+		font-size: 13px;
+		font-weight: 700;
+		color: #4f378a;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.inv-bv-ref {
+		background: #f2ecf4;
+		padding: 2px 8px;
+		border-radius: 2px;
+		font-weight: 600;
+	}
+
+	.inv-bank-footer {
+		margin-top: 12px;
+		padding-top: 8px;
+		border-top: 1px dotted #cbc4d2;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		font-size: 10px;
+		color: #494551;
 		font-style: italic;
+	}
+
+	.inv-bank-footer p { margin: 0; }
+
+	.inv-page-num {
+		text-align: right;
+		font-size: 10px;
+		color: #494551;
+	}
+
+	.draft-panel { max-width: 820px; margin-bottom: 20px; }
+	.draft-panel .textarea { height: auto; padding: 6px 10px; min-height: 52px; }
+
+	@media print {
+		:global(.sidebar),
+		:global(.topbar),
+		:global(.page-header),
+		:global(.payments-section) { display: none !important; }
+
+		.draft-panel { display: none; }
+
+		:global(.app-shell) { display: block !important; }
+		:global(.main)    { display: block !important; overflow: visible !important; }
+		:global(.content) { padding: 0 !important; overflow: visible !important; }
+
+		.inv-wrap { background: white; padding: 0; max-width: none; border-radius: 0; }
+		.inv-doc  { border: none; box-shadow: none; }
 	}
 </style>

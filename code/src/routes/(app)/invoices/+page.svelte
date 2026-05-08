@@ -8,6 +8,13 @@
 	let activeInvoiceId = $state<string | null>(null);
 	let filterStatus = $derived(data.filters.status);
 
+	// Merge drafts into the single table. Drafts go first when no status filter is active.
+	const allInvoices = $derived(() => {
+		if (filterStatus === 'draft') return data.drafts as typeof data.drafts;
+		if (filterStatus && filterStatus !== 'draft') return data.issuedInvoices as typeof data.issuedInvoices;
+		return [...data.drafts, ...data.issuedInvoices] as Array<typeof data.drafts[number] | typeof data.issuedInvoices[number]>;
+	});
+
 	function draftFormState() {
 		return form as { draftId?: string; draftError?: string; draftSuccess?: string } | null;
 	}
@@ -89,102 +96,7 @@
 	</div>
 {/if}
 
-<!-- Drafts section -->
-{#if data.drafts.length > 0}
-	<div style="margin-bottom:24px;">
-		<div style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; font-family:var(--font-mono); color:var(--text-muted); margin-bottom:12px;">
-			Чернови · {data.drafts.length}
-		</div>
-		<div class="col gap-3">
-			{#each data.drafts as draft}
-				<div class="card">
-					<div class="card-header">
-						<div>
-							<div class="row gap-2" style="margin-bottom:4px;">
-								<span class="badge inv-draft">Чернова</span>
-								{#if draft.isStaleDraft}
-									<span class="badge inv-partial">Остарял</span>
-								{/if}
-							</div>
-							<h3 class="card-title">{draft.client.legalName}</h3>
-							<div class="card-sub">Създадена от {draft.createdByUser.firstName} {draft.createdByUser.lastName} · {fmtDate(draft.lastUpdatedAt)}</div>
-						</div>
-						<div class="col" style="align-items:flex-end;">
-							<span class="amount" style="font-size:18px; font-weight:600;">{fmtMoney(draft.grossTotalCents)} {data.company.currency}</span>
-							<span class="muted" style="font-size:11px;">{draft.taskSelections.length} реда</span>
-						</div>
-					</div>
-
-					{#if draftFormState()?.draftId === draft.id && draftFormState()?.draftError}
-						<div class="alert danger" style="margin:0 16px 12px;">{draftFormState()?.draftError}</div>
-					{/if}
-
-					<form method="POST" style="padding:0 16px 16px;">
-						<input type="hidden" name="invoiceId" value={draft.id} />
-
-						<div style="display:grid; grid-template-columns:160px 160px 160px 1fr; gap:12px; margin-bottom:16px;">
-							<div class="field">
-								<label class="label" for="servicePeriodFrom-{draft.id}">Период от</label>
-								<input class="input" id="servicePeriodFrom-{draft.id}" name="servicePeriodFrom" type="date" value={dateInputValue(draft.servicePeriodFrom)} />
-							</div>
-							<div class="field">
-								<label class="label" for="servicePeriodTo-{draft.id}">Период до</label>
-								<input class="input" id="servicePeriodTo-{draft.id}" name="servicePeriodTo" type="date" value={dateInputValue(draft.servicePeriodTo)} />
-							</div>
-							<div class="field">
-								<label class="label" for="dueDate-{draft.id}">Падеж</label>
-								<input class="input" id="dueDate-{draft.id}" name="dueDate" type="date" value={dateInputValue(draft.dueDate)} />
-							</div>
-							<div style="display:flex; gap:24px; align-items:flex-end; padding-bottom:2px;">
-								<div>
-									<div class="muted" style="font-size:11px; margin-bottom:2px;">Без ДДС</div>
-									<div class="amount" style="font-weight:500;">{fmtMoney(draft.netTotalCents)}</div>
-								</div>
-								<div>
-									<div class="muted" style="font-size:11px; margin-bottom:2px;">ДДС {(draft.vatRateBasisPoints / 100).toFixed(0)}%</div>
-									<div class="amount" style="font-weight:500;">{fmtMoney(draft.vatTotalCents)}</div>
-								</div>
-								<div>
-									<div class="muted" style="font-size:11px; margin-bottom:2px;">Общо</div>
-									<div class="amount" style="font-size:16px; font-weight:600;">{fmtMoney(draft.grossTotalCents)}</div>
-								</div>
-							</div>
-						</div>
-
-						<!-- Task selections -->
-						<div style="border:1px solid var(--border); border-radius:var(--r-md); overflow:hidden; margin-bottom:16px;">
-							{#each draft.taskSelections as sel, idx}
-								<div style="padding:10px 14px; border-top:{idx > 0 ? '1px solid var(--border-soft)' : 'none'};">
-									<div class="row-between" style="margin-bottom:6px;">
-										<span style="font-weight:500; font-size:13px;">{sel.task.title}</span>
-										<span class="amount" style="font-weight:500;">{fmtMoney(lineAmount(sel))}</span>
-									</div>
-									<div class="muted" style="font-size:12px; margin-bottom:6px;">{sel.task.taskList.project.name}</div>
-									<div class="field" style="margin:0;">
-										<label class="label" for="desc-{sel.id}" style="font-size:10px;">Описание на реда</label>
-										<textarea class="input" id="desc-{sel.id}" name="description:{sel.id}" rows="2" style="font-size:12px; resize:none;">{sel.description}</textarea>
-									</div>
-								</div>
-							{/each}
-						</div>
-
-						<div class="row gap-2">
-							<button class="btn btn-primary btn-sm" type="submit" formaction="?/issueDraft">
-								<Icon name="check" size={13}/>Издай фактура
-							</button>
-							<button class="btn btn-secondary btn-sm" type="submit" formaction="?/saveDraft">Запази</button>
-							<button class="btn btn-ghost btn-sm" type="submit" formaction="?/recalculateDraft">
-								<Icon name="refresh" size={13}/>Преизчисли
-							</button>
-						</div>
-					</form>
-				</div>
-			{/each}
-		</div>
-	</div>
-{/if}
-
-<!-- Issued invoices table -->
+<!-- Invoices table -->
 <div class="row-between" style="margin-bottom:12px;">
 	<div class="chip-group">
 		<a href="/invoices" class="chip {filterStatus === '' ? 'active' : ''}">Всички · {totalCount}</a>
@@ -222,36 +134,44 @@
 			</tr>
 		</thead>
 		<tbody>
-			{#each data.issuedInvoices as invoice}
-				<tr class={invoice.status === 'overdue' ? 'highlight-amber' : ''}>
-					<td class="amount" style="font-weight:{invoice.status === 'draft' ? 400 : 500};">
-						<a href="/invoices/{invoice.id}" style="color:inherit;">{invoice.invoiceNumber ?? 'Без номер'}</a>
-						</td>
-					<td>{invoice.client.legalName}</td>
-					<td class="amount muted">{fmtDate(invoice.issueDate)}</td>
-					<td class="amount muted">{fmtDate(invoice.dueDate)}</td>
-					<td class="num muted">{fmtMoney(invoice.netTotalCents)}</td>
-					<td class="num muted">{fmtMoney(invoice.vatTotalCents)}</td>
-					<td class="num" style="font-weight:500;">{fmtMoney(invoice.grossTotalCents)}</td>
+			{#each allInvoices() as invoice}
+				{@const inv = invoice as any}
+				{@const isDraft = inv.status === 'draft'}
+				<tr class={inv.status === 'overdue' ? 'highlight-amber' : (isDraft ? 'row-draft' : '')}>
+					<td class="amount" style="font-weight:{isDraft ? 400 : 500};">
+						<a href="/invoices/{inv.id}" style="color:inherit;">{inv.invoiceNumber ?? 'Без номер'}</a>
+					</td>
+					<td>{inv.client.legalName}</td>
+					<td class="amount muted">{isDraft ? '—' : fmtDate(inv.issueDate)}</td>
+					<td class="amount muted">{isDraft ? '—' : fmtDate(inv.dueDate)}</td>
+					<td class="num muted">{fmtMoney(inv.netTotalCents)}</td>
+					<td class="num muted">{fmtMoney(inv.vatTotalCents)}</td>
+					<td class="num" style="font-weight:500;">{fmtMoney(inv.grossTotalCents)}</td>
 					<td>
-						<span class="badge {statusBadgeClass(invoice.status)}">{statusLabels[invoice.status] ?? invoice.status}</span>
+						<span class="badge {statusBadgeClass(inv.status)}">{statusLabels[inv.status] ?? inv.status}</span>
 					</td>
 					<td>
-						<button class="topbar-icon-btn" onclick={() => (activeInvoiceId = activeInvoiceId === invoice.id ? null : invoice.id)}>
-							<Icon name={activeInvoiceId === invoice.id ? 'chevron-down' : 'more'} size={13}/>
-						</button>
+						{#if isDraft}
+							<a href="/invoices/{inv.id}" class="topbar-icon-btn" title="Редактирай чернова">
+								<Icon name="edit" size={13}/>
+							</a>
+						{:else}
+							<button class="topbar-icon-btn" onclick={() => (activeInvoiceId = activeInvoiceId === inv.id ? null : inv.id)}>
+								<Icon name={activeInvoiceId === inv.id ? 'chevron-down' : 'more'} size={13}/>
+							</button>
+						{/if}
 					</td>
 				</tr>
 
-				{#if activeInvoiceId === invoice.id}
+				{#if !isDraft && activeInvoiceId === inv.id}
 					<tr>
 						<td colspan="9" style="padding:0; background:var(--surface);">
 							<div style="padding:16px; border-top:1px solid var(--border);">
 								<!-- Payment info -->
-								{#if invoice.payments && invoice.payments.length > 0}
+								{#if inv.payments && inv.payments.length > 0}
 									<div style="margin-bottom:12px;">
 										<div style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; font-family:var(--font-mono); color:var(--text-muted); margin-bottom:8px;">Плащания</div>
-										{#each invoice.payments as payment}
+										{#each inv.payments as payment}
 											<div class="row gap-3" style="font-size:12px; padding:4px 0;">
 												<span class="amount muted">{fmtDate(payment.paymentDate)}</span>
 												<span>{paymentMethodLabel(payment.paymentMethod)}</span>
@@ -263,31 +183,31 @@
 								{/if}
 
 								<!-- Record payment form -->
-								{#if isFinanceUser() && (invoice.status === 'issued' || invoice.status === 'partially_paid')}
-									{#if paymentFormState()?.paymentInvoiceId === invoice.id && paymentFormState()?.paymentError}
+								{#if isFinanceUser() && (inv.status === 'issued' || inv.status === 'partially_paid')}
+									{#if paymentFormState()?.paymentInvoiceId === inv.id && paymentFormState()?.paymentError}
 										<div class="alert danger" style="margin-bottom:8px;">{paymentFormState()?.paymentError}</div>
 									{/if}
 									<form method="POST" action="?/recordPayment">
-										<input type="hidden" name="invoiceId" value={invoice.id} />
+										<input type="hidden" name="invoiceId" value={inv.id} />
 										<div style="display:grid; grid-template-columns:160px 160px 160px 1fr auto; gap:10px; align-items:end;">
 											<div class="field" style="margin:0;">
-												<label class="label" for="amount-{invoice.id}">Сума ({data.company.currency})</label>
-												<input class="input" id="amount-{invoice.id}" name="amount" type="number" min="0.01" step="0.01" required />
+												<label class="label" for="amount-{inv.id}">Сума ({data.company.currency})</label>
+												<input class="input" id="amount-{inv.id}" name="amount" type="number" min="0.01" step="0.01" required />
 											</div>
 											<div class="field" style="margin:0;">
-												<label class="label" for="payDate-{invoice.id}">Дата</label>
-												<input class="input" id="payDate-{invoice.id}" name="paymentDate" type="date" value={todayInputValue()} required />
+												<label class="label" for="payDate-{inv.id}">Дата</label>
+												<input class="input" id="payDate-{inv.id}" name="paymentDate" type="date" value={todayInputValue()} required />
 											</div>
 											<div class="field" style="margin:0;">
-												<label class="label" for="payMethod-{invoice.id}">Метод</label>
-												<select class="select" id="payMethod-{invoice.id}" name="paymentMethod">
-													<option value="bank_transfer" selected={invoice.paymentMethod === 'bank_transfer'}>Банков превод</option>
-													<option value="cash" selected={invoice.paymentMethod === 'cash'}>В брой</option>
+												<label class="label" for="payMethod-{inv.id}">Метод</label>
+												<select class="select" id="payMethod-{inv.id}" name="paymentMethod">
+													<option value="bank_transfer" selected={inv.paymentMethod === 'bank_transfer'}>Банков превод</option>
+													<option value="cash" selected={inv.paymentMethod === 'cash'}>В брой</option>
 												</select>
 											</div>
 											<div class="field" style="margin:0;">
-												<label class="label" for="notes-{invoice.id}">Бележки</label>
-												<input class="input" id="notes-{invoice.id}" name="notes" type="text" placeholder="По желание" />
+												<label class="label" for="notes-{inv.id}">Бележки</label>
+												<input class="input" id="notes-{inv.id}" name="notes" type="text" placeholder="По желание" />
 											</div>
 											<button type="submit" class="btn btn-primary btn-sm" style="align-self:end;">
 												<Icon name="check" size={13}/>Запиши плащане
@@ -297,7 +217,7 @@
 								{/if}
 
 								<div class="row gap-2" style="margin-top:12px;">
-									<a href="/invoices/{invoice.id}" class="btn btn-secondary btn-sm">Детайли</a>
+									<a href="/invoices/{inv.id}" class="btn btn-secondary btn-sm">Детайли</a>
 									<button class="btn btn-ghost btn-sm" onclick={() => (activeInvoiceId = null)}>Затвори</button>
 								</div>
 							</div>
