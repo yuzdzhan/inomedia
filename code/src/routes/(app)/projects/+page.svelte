@@ -260,7 +260,9 @@
 {:else}
 	<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px;">
 		{#each filteredProjects as project}
-			<div class="card" style="cursor:pointer;" onclick={() => toggleProject(project.id)}>
+			<div class="card" style="cursor:pointer;" role="button" tabindex="0"
+				onclick={() => toggleProject(project.id)}
+				onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleProject(project.id); } }}>
 				<div style="padding:16px;">
 					<div class="row-between" style="margin-bottom:8px;">
 						<span class="amount muted" style="font-size:11px;">{project.client.legalName}</span>
@@ -306,6 +308,10 @@
 						</div>
 						<div class="row gap-2">
 							<span class="amount muted" style="font-size:11px;">{project.members.length} в екипа</span>
+							<a href="/projects/{project.id}" class="btn btn-ghost btn-sm" style="height:24px; padding:0 8px; font-size:11px;"
+								onclick={(e) => e.stopPropagation()}>
+								<Icon name="folder" size={12}/>Задачи
+							</a>
 							{#if data.permissions.canManageProjects}
 								<button class="topbar-icon-btn" onclick={(e) => { e.stopPropagation(); toggleProject(project.id); }} aria-label="Настройки">
 									<Icon name={isExpanded(project.id) ? 'chevron-down' : 'more'} size={13}/>

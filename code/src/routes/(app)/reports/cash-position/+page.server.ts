@@ -1,4 +1,4 @@
-import { redirect } from '@sveltejs/kit';
+import { redirect, error, isHttpError, isRedirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { ensureMoneyContainers } from '$lib/server/ledger';
 import type { PageServerLoad } from './$types';
@@ -31,6 +31,7 @@ async function getBalanceAsOf(
 }
 
 export const load: PageServerLoad = async ({ parent, url }) => {
+	try {
 	const { user } = await parent();
 	if (!canViewCashPosition(user.role)) {
 		redirect(302, '/dashboard');
@@ -199,4 +200,9 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 			dateTo: dateToParam
 		}
 	};
+	} catch (e) {
+		if (isRedirect(e) || isHttpError(e)) throw e;
+		console.error(e);
+		throw error(500, 'Грешка при зареждане на данните.');
+	}
 };

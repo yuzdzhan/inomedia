@@ -1,4 +1,4 @@
-import { redirect } from '@sveltejs/kit';
+import { redirect, error, isHttpError, isRedirect } from '@sveltejs/kit';
 import type { InvoiceStatus } from '@prisma/client';
 import { db } from '$lib/server/db';
 
@@ -33,6 +33,7 @@ async function getManagedScope(userId: string) {
 const issuedStatuses: InvoiceStatus[] = ['issued', 'partially_paid', 'paid', 'overdue'];
 
 export async function load({ parent, url }: { parent: () => Promise<{ user: { id: string; role: string } }>; url: URL }) {
+	try {
 	const { user } = await parent();
 
 	if (!canViewProfitability(user.role)) {
@@ -462,4 +463,9 @@ export async function load({ parent, url }: { parent: () => Promise<{ user: { id
 		currency: company.currency,
 		isManager: user.role === 'manager'
 	};
+	} catch (e) {
+		if (isRedirect(e) || isHttpError(e)) throw e;
+		console.error(e);
+		throw error(500, 'Грешка при зареждане на данните.');
+	}
 }

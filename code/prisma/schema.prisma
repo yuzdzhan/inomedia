@@ -301,6 +301,7 @@ model Client {
   registrationNumber String?
   vatNumber         String?
   billingAddress    String?
+  mol               String?
   defaultPaymentTermDays Int?
   isInternal        Boolean      @default(false)
   isProtectedSystem Boolean      @default(false)

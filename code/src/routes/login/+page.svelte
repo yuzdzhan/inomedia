@@ -34,6 +34,7 @@
 		<form method="POST">
 			<div class="field">
 				<label class="label" for="email">Имейл</label>
+				<!-- svelte-ignore a11y_autofocus -->
 				<input class="input" id="email" name="email" type="email" value={form?.email ?? ''} autocomplete="email" required autofocus />
 			</div>
 			<div class="field">

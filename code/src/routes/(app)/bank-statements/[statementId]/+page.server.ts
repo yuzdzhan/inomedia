@@ -1,4 +1,4 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { fail, redirect, error, isHttpError, isRedirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
 import { createInvoicePaymentLedgerEntry } from '$lib/server/ledger';
@@ -17,119 +17,125 @@ async function getCompanyOrRedirect() {
 }
 
 export const load: PageServerLoad = async ({ parent, params }) => {
-	const { user } = await parent();
-	if (!canManageStatements(user.role)) {
-		redirect(302, '/dashboard');
-	}
+	try {
+		const { user } = await parent();
+		if (!canManageStatements(user.role)) {
+			redirect(302, '/dashboard');
+		}
 
-	const company = await getCompanyOrRedirect();
-	const { statementId } = params;
+		const company = await getCompanyOrRedirect();
+		const { statementId } = params;
 
-	const statement = await db.bankStatement.findFirst({
-		where: { id: statementId, companyId: company.id },
-		select: {
-			id: true,
-			originalFilename: true,
-			importedAt: true,
-			parseStatus: true,
-			parsingVersion: true,
-			sizeBytes: true,
-			importedByUser: { select: { firstName: true, lastName: true } },
-			rows: {
-				orderBy: [{ rowIndex: 'asc' }],
-				select: {
-					id: true,
-					rowIndex: true,
-					transactionDate: true,
-					description: true,
-					amountCents: true,
-					matchState: true,
-					reviewNote: true,
-					invoicePayment: {
-						select: {
-							id: true,
-							amountCents: true,
-							paymentDate: true,
-							paymentMethod: true,
-							notes: true,
-							invoice: {
-								select: {
-									id: true,
-									invoiceNumber: true,
-									status: true,
-									client: { select: { legalName: true } }
+		const statement = await db.bankStatement.findFirst({
+			where: { id: statementId, companyId: company.id },
+			select: {
+				id: true,
+				originalFilename: true,
+				importedAt: true,
+				parseStatus: true,
+				parsingVersion: true,
+				sizeBytes: true,
+				importedByUser: { select: { firstName: true, lastName: true } },
+				rows: {
+					orderBy: [{ rowIndex: 'asc' }],
+					select: {
+						id: true,
+						rowIndex: true,
+						transactionDate: true,
+						description: true,
+						amountCents: true,
+						matchState: true,
+						reviewNote: true,
+						invoicePayment: {
+							select: {
+								id: true,
+								amountCents: true,
+								paymentDate: true,
+								paymentMethod: true,
+								notes: true,
+								invoice: {
+									select: {
+										id: true,
+										invoiceNumber: true,
+										status: true,
+										client: { select: { legalName: true } }
+									}
 								}
 							}
-						}
-					},
-					standaloneIncome: {
-						select: {
-							id: true,
-							description: true,
-							amountCents: true,
-							incomeDate: true
+						},
+						standaloneIncome: {
+							select: {
+								id: true,
+								description: true,
+								amountCents: true,
+								incomeDate: true
+							}
 						}
 					}
 				}
 			}
-		}
-	});
+		});
 
-	if (!statement) {
-		redirect(302, '/bank-statements');
+		if (!statement) {
+			redirect(302, '/bank-statements');
+		}
+
+		// Group rows by matchState
+		const matchedRows = statement.rows.filter((r) => r.matchState === 'auto_matched');
+		const needsReviewRows = statement.rows.filter((r) => r.matchState === 'needs_review');
+		const unmatchedRows = statement.rows.filter((r) => r.matchState === 'unmatched');
+		const irrelevantRows = statement.rows.filter((r) => r.matchState === 'irrelevant');
+
+		// Load open invoices for manual matching (issued/partially_paid for this company)
+		const openInvoices = await db.invoice.findMany({
+			where: {
+				status: { in: ['issued', 'partially_paid'] },
+				client: { companyId: company.id }
+			},
+			orderBy: [{ issueDate: 'desc' }, { createdAt: 'desc' }],
+			select: {
+				id: true,
+				invoiceNumber: true,
+				grossTotalCents: true,
+				paidTotalCents: true,
+				status: true,
+				client: { select: { legalName: true } }
+			}
+		});
+
+		return {
+			statement: {
+				id: statement.id,
+				originalFilename: statement.originalFilename,
+				importedAt: statement.importedAt,
+				parseStatus: statement.parseStatus,
+				parsingVersion: statement.parsingVersion,
+				sizeBytes: statement.sizeBytes,
+				importedByName: `${statement.importedByUser.firstName} ${statement.importedByUser.lastName}`.trim()
+			},
+			matchedRows,
+			needsReviewRows,
+			unmatchedRows,
+			irrelevantRows,
+			openInvoices: openInvoices.map((inv) => ({
+				id: inv.id,
+				invoiceNumber: inv.invoiceNumber,
+				clientName: inv.client.legalName,
+				remainingCents: inv.grossTotalCents - inv.paidTotalCents,
+				status: inv.status
+			})),
+			autoMatchCounts: {
+				matched: matchedRows.length,
+				needsReview: needsReviewRows.length,
+				unmatched: unmatchedRows.length,
+				irrelevant: irrelevantRows.length
+			}
+		};
+	} catch (e) {
+		if (isRedirect(e) || isHttpError(e)) throw e;
+		console.error(e);
+		throw error(500, 'Грешка при зареждане на данните.');
 	}
-
-	// Group rows by matchState
-	const matchedRows = statement.rows.filter((r) => r.matchState === 'auto_matched');
-	const needsReviewRows = statement.rows.filter((r) => r.matchState === 'needs_review');
-	const unmatchedRows = statement.rows.filter((r) => r.matchState === 'unmatched');
-	const irrelevantRows = statement.rows.filter((r) => r.matchState === 'irrelevant');
-
-	// Load open invoices for manual matching (issued/partially_paid for this company)
-	const openInvoices = await db.invoice.findMany({
-		where: {
-			status: { in: ['issued', 'partially_paid'] },
-			client: { companyId: company.id }
-		},
-		orderBy: [{ issueDate: 'desc' }, { createdAt: 'desc' }],
-		select: {
-			id: true,
-			invoiceNumber: true,
-			grossTotalCents: true,
-			paidTotalCents: true,
-			status: true,
-			client: { select: { legalName: true } }
-		}
-	});
-
-	return {
-		statement: {
-			id: statement.id,
-			originalFilename: statement.originalFilename,
-			importedAt: statement.importedAt,
-			parseStatus: statement.parseStatus,
-			parsingVersion: statement.parsingVersion,
-			sizeBytes: statement.sizeBytes,
-			importedByName: `${statement.importedByUser.firstName} ${statement.importedByUser.lastName}`.trim()
-		},
-		matchedRows,
-		needsReviewRows,
-		unmatchedRows,
-		irrelevantRows,
-		openInvoices: openInvoices.map((inv) => ({
-			id: inv.id,
-			invoiceNumber: inv.invoiceNumber,
-			clientName: inv.client.legalName,
-			remainingCents: inv.grossTotalCents - inv.paidTotalCents,
-			status: inv.status
-		})),
-		autoMatchCounts: {
-			matched: matchedRows.length,
-			needsReview: needsReviewRows.length,
-			unmatched: unmatchedRows.length,
-			irrelevant: irrelevantRows.length
-		}
-	};
 };
 
 export const actions: Actions = {

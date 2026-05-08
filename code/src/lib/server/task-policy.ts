@@ -12,7 +12,7 @@ export { formatMoneyFromCents, parseOptionalMoneyToCents };
 
 const TASK_COMMENT_AUTHOR_ROLES = ['admin', 'manager', 'employee'] as const;
 const TASK_COMMENT_DELETE_ROLES = ['admin', 'manager'] as const;
-const TASK_TIME_LOG_AUTHOR_ROLES = ['employee'] as const;
+const TASK_TIME_LOG_AUTHOR_ROLES = ['admin', 'employee'] as const;
 
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
 	todo: 'За изпълнение',

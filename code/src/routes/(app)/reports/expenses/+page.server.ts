@@ -1,4 +1,4 @@
-import { redirect } from '@sveltejs/kit';
+import { redirect, error, isHttpError, isRedirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import type { PageServerLoad } from './$types';
 
@@ -28,6 +28,7 @@ async function getManagedProjectIds(userId: string): Promise<string[]> {
 }
 
 export const load: PageServerLoad = async ({ parent, url }) => {
+	try {
 	const { user } = await parent();
 
 	if (!canViewExpenseReports(user.role)) {
@@ -265,4 +266,9 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 		isManager: user.role === 'manager',
 		isAdminOrAccountant: user.role === 'admin' || user.role === 'accountant'
 	};
+	} catch (e) {
+		if (isRedirect(e) || isHttpError(e)) throw e;
+		console.error(e);
+		throw error(500, 'Грешка при зареждане на данните.');
+	}
 };

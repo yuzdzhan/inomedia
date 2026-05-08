@@ -1,4 +1,4 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { fail, redirect, error, isHttpError, isRedirect } from '@sveltejs/kit';
 import { Prisma } from '@prisma/client';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
@@ -58,6 +58,7 @@ async function getDrafts() {
 					legalName: true,
 					registrationNumber: true,
 					vatNumber: true,
+					mol: true,
 					billingAddress: true,
 					defaultPaymentTermDays: true
 				}
@@ -179,6 +180,7 @@ async function getDraftForUpdate(invoiceId: string) {
 					legalName: true,
 					registrationNumber: true,
 					vatNumber: true,
+					mol: true,
 					billingAddress: true,
 					defaultPaymentTermDays: true
 				}
@@ -230,6 +232,7 @@ type IssuableDraftSnapshot = {
 		legalName: string;
 		registrationNumber: string | null;
 		vatNumber: string | null;
+		mol: string | null;
 		billingAddress: string | null;
 	};
 	taskSelections: Array<{
@@ -271,7 +274,8 @@ function buildIssuedSnapshot(
 			legalName: draft.client.legalName,
 			registrationNumber: draft.client.registrationNumber,
 			vatNumber: draft.client.vatNumber,
-			address: draft.client.billingAddress
+			address: draft.client.billingAddress,
+			molName: draft.client.mol
 		},
 		lines: draft.taskSelections.map((selection) => ({
 			description: selection.description,
@@ -300,40 +304,46 @@ function getTimeLogIdsFromSelection(selection: { snapshotJson: Prisma.JsonValue 
 }
 
 export const load: PageServerLoad = async ({ parent, url }) => {
-	const { user } = await parent();
-	if (!canManageInvoices(user.role)) {
-		redirect(302, '/dashboard');
+	try {
+		const { user } = await parent();
+		if (!canManageInvoices(user.role)) {
+			redirect(302, '/dashboard');
+		}
+
+		const company = await getCompanyOrRedirect();
+
+		const filters = {
+			status: url.searchParams.get('status') ?? '',
+			clientId: url.searchParams.get('clientId') ?? '',
+			dateFrom: url.searchParams.get('dateFrom') ?? '',
+			dateTo: url.searchParams.get('dateTo') ?? '',
+			search: url.searchParams.get('search') ?? ''
+		};
+
+		const [drafts, issuedInvoices, clients] = await Promise.all([
+			getDrafts(),
+			getIssuedInvoices(filters),
+			db.client.findMany({
+				where: { companyId: company.id, status: 'active' },
+				orderBy: { legalName: 'asc' },
+				select: { id: true, legalName: true }
+			})
+		]);
+
+		return {
+			company,
+			drafts,
+			issuedInvoices,
+			clients,
+			filters,
+			draftCreated: url.searchParams.get('draftCreated'),
+			issuedInvoiceId: url.searchParams.get('issued')
+		};
+	} catch (e) {
+		if (isRedirect(e) || isHttpError(e)) throw e;
+		console.error(e);
+		throw error(500, 'Грешка при зареждане на данните.');
 	}
-
-	const company = await getCompanyOrRedirect();
-
-	const filters = {
-		status: url.searchParams.get('status') ?? '',
-		clientId: url.searchParams.get('clientId') ?? '',
-		dateFrom: url.searchParams.get('dateFrom') ?? '',
-		dateTo: url.searchParams.get('dateTo') ?? '',
-		search: url.searchParams.get('search') ?? ''
-	};
-
-	const [drafts, issuedInvoices, clients] = await Promise.all([
-		getDrafts(),
-		getIssuedInvoices(filters),
-		db.client.findMany({
-			where: { companyId: company.id, status: 'active' },
-			orderBy: { legalName: 'asc' },
-			select: { id: true, legalName: true }
-		})
-	]);
-
-	return {
-		company,
-		drafts,
-		issuedInvoices,
-		clients,
-		filters,
-		draftCreated: url.searchParams.get('draftCreated'),
-		issuedInvoiceId: url.searchParams.get('issued')
-	};
 };
 
 export const actions: Actions = {

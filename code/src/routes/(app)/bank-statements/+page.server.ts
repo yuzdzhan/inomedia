@@ -1,4 +1,4 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { fail, redirect, error, isHttpError, isRedirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
 import { autoMatchStatementRows } from '$lib/server/statement-matching';
@@ -45,45 +45,51 @@ function parseStatementRows(
 }
 
 export const load: PageServerLoad = async ({ parent }) => {
-	const { user } = await parent();
-	if (!canManageStatements(user.role)) {
-		redirect(302, '/dashboard');
-	}
-
-	const company = await getCompanyOrRedirect();
-
-	const statements = await db.bankStatement.findMany({
-		where: { companyId: company.id },
-		orderBy: { importedAt: 'desc' },
-		select: {
-			id: true,
-			originalFilename: true,
-			importedAt: true,
-			parseStatus: true,
-			parsingVersion: true,
-			sizeBytes: true,
-			importedByUser: { select: { firstName: true, lastName: true } },
-			_count: { select: { rows: true } },
-			rows: {
-				where: { matchState: 'needs_review' },
-				select: { id: true }
-			}
+	try {
+		const { user } = await parent();
+		if (!canManageStatements(user.role)) {
+			redirect(302, '/dashboard');
 		}
-	});
 
-	return {
-		statements: statements.map((s) => ({
-			id: s.id,
-			originalFilename: s.originalFilename,
-			importedAt: s.importedAt,
-			parseStatus: s.parseStatus,
-			parsingVersion: s.parsingVersion,
-			sizeBytes: s.sizeBytes,
-			importedByName: `${s.importedByUser.firstName} ${s.importedByUser.lastName}`.trim(),
-			rowCount: s._count.rows,
-			needsReviewCount: s.rows.length
-		}))
-	};
+		const company = await getCompanyOrRedirect();
+
+		const statements = await db.bankStatement.findMany({
+			where: { companyId: company.id },
+			orderBy: { importedAt: 'desc' },
+			select: {
+				id: true,
+				originalFilename: true,
+				importedAt: true,
+				parseStatus: true,
+				parsingVersion: true,
+				sizeBytes: true,
+				importedByUser: { select: { firstName: true, lastName: true } },
+				_count: { select: { rows: true } },
+				rows: {
+					where: { matchState: 'needs_review' },
+					select: { id: true }
+				}
+			}
+		});
+
+		return {
+			statements: statements.map((s) => ({
+				id: s.id,
+				originalFilename: s.originalFilename,
+				importedAt: s.importedAt,
+				parseStatus: s.parseStatus,
+				parsingVersion: s.parsingVersion,
+				sizeBytes: s.sizeBytes,
+				importedByName: `${s.importedByUser.firstName} ${s.importedByUser.lastName}`.trim(),
+				rowCount: s._count.rows,
+				needsReviewCount: s.rows.length
+			}))
+		};
+	} catch (e) {
+		if (isRedirect(e) || isHttpError(e)) throw e;
+		console.error(e);
+		throw error(500, 'Грешка при зареждане на данните.');
+	}
 };
 
 export const actions: Actions = {

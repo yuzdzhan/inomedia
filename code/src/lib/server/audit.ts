@@ -13,17 +13,21 @@ type AuditEventInput = {
 };
 
 export async function logAuditEvent(input: AuditEventInput) {
-	await db.auditEvent.create({
-		data: {
-			actorUserId: input.actorUserId ?? null,
-			eventType: input.eventType,
-			entityType: input.entityType ?? null,
-			entityId: input.entityId ?? null,
-			oldValueJson: input.oldValueJson ?? undefined,
-			newValueJson: input.newValueJson ?? undefined,
-			reason: input.reason ?? null,
-			ipAddress: input.ipAddress ?? null,
-			userAgent: input.userAgent ?? null
-		}
-	});
+	try {
+		await db.auditEvent.create({
+			data: {
+				actorUserId: input.actorUserId ?? null,
+				eventType: input.eventType,
+				entityType: input.entityType ?? null,
+				entityId: input.entityId ?? null,
+				oldValueJson: input.oldValueJson ?? undefined,
+				newValueJson: input.newValueJson ?? undefined,
+				reason: input.reason ?? null,
+				ipAddress: input.ipAddress ?? null,
+				userAgent: input.userAgent ?? null
+			}
+		});
+	} catch (e) {
+		console.error('[audit] Failed to log event:', input.eventType, e);
+	}
 }

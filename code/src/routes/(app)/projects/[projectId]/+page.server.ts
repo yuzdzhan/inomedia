@@ -1,4 +1,4 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { fail, redirect, error, isHttpError, isRedirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { TaskBillingType, TaskPriority, TaskStatus } from '@prisma/client';
 import { db } from '$lib/server/db';
@@ -532,62 +532,68 @@ function canUserViewProjectRateData(
 }
 
 export const load: PageServerLoad = async ({ params, parent, url }) => {
-	const { user } = await parent();
-	if (!canAccessProjectTasks(user.role)) {
-		redirect(302, '/dashboard');
-	}
-
-	const company = await getCompanyOrRedirect();
-	const project = await getScopedProject(company.id, params.projectId);
-
-	if (!project) {
-		redirect(302, '/projects');
-	}
-
-	const showClosed = url.searchParams.get('showClosed') === '1';
-	const isEmployeeView = user.role === 'employee';
-
-	if (isEmployeeView && !project.members.some((member) => member.userId === user.id)) {
-		redirect(302, '/projects');
-	}
-
-	return {
-		company: { currency: company.currency, timezone: company.timezone },
-		today: formatDateInTimezone(new Date(), company.timezone),
-		project: {
-			...project,
-			taskLists: project.taskLists.map((taskList) => {
-				const relevantTasks = isEmployeeView
-					? taskList.tasks.filter((task) => task.assignees.some((assignee) => assignee.userId === user.id))
-					: taskList.tasks;
-				const visibleTasks = showClosed
-					? relevantTasks
-					: relevantTasks.filter((task) => !isClosedTask(task.status));
-
-				return {
-					...taskList,
-					hiddenClosedTaskCount: showClosed ? 0 : relevantTasks.length - visibleTasks.length,
-					tasks: visibleTasks.map((task) => ({
-						...task,
-						deadlineDateInput: formatDateForInput(task.deadlineDate)
-					}))
-				};
-			})
-		},
-		showClosed,
-		permissions: {
-			currentUserId: user.id,
-			currentUserRole: user.role,
-			canManageTasks: canManageProjectTasks(user.role),
-			canManageProjects: canCreateOrManageProjects(user.role),
-			canCreateComments: canCreateTaskComments(user.role),
-			canCreateTimeLogs: canCreateTaskTimeLogs(user.role),
-			canSoftDeleteComments: canSoftDeleteTaskComments(user.role),
-			canViewFinancials: canViewProjectFinancials(user.role),
-			canViewRates: canUserViewProjectRateData(user, project),
-			isEmployeeView
+	try {
+		const { user } = await parent();
+		if (!canAccessProjectTasks(user.role)) {
+			redirect(302, '/dashboard');
 		}
-	};
+
+		const company = await getCompanyOrRedirect();
+		const project = await getScopedProject(company.id, params.projectId);
+
+		if (!project) {
+			redirect(302, '/projects');
+		}
+
+		const showClosed = url.searchParams.get('showClosed') === '1';
+		const isEmployeeView = user.role === 'employee';
+
+		if (isEmployeeView && !project.members.some((member) => member.userId === user.id)) {
+			redirect(302, '/projects');
+		}
+
+		return {
+			company: { currency: company.currency, timezone: company.timezone },
+			today: formatDateInTimezone(new Date(), company.timezone),
+			project: {
+				...project,
+				taskLists: project.taskLists.map((taskList) => {
+					const relevantTasks = isEmployeeView
+						? taskList.tasks.filter((task) => task.assignees.some((assignee) => assignee.userId === user.id))
+						: taskList.tasks;
+					const visibleTasks = showClosed
+						? relevantTasks
+						: relevantTasks.filter((task) => !isClosedTask(task.status));
+
+					return {
+						...taskList,
+						hiddenClosedTaskCount: showClosed ? 0 : relevantTasks.length - visibleTasks.length,
+						tasks: visibleTasks.map((task) => ({
+							...task,
+							deadlineDateInput: formatDateForInput(task.deadlineDate)
+						}))
+					};
+				})
+			},
+			showClosed,
+			permissions: {
+				currentUserId: user.id,
+				currentUserRole: user.role,
+				canManageTasks: canManageProjectTasks(user.role),
+				canManageProjects: canCreateOrManageProjects(user.role),
+				canCreateComments: canCreateTaskComments(user.role),
+				canCreateTimeLogs: canCreateTaskTimeLogs(user.role),
+				canSoftDeleteComments: canSoftDeleteTaskComments(user.role),
+				canViewFinancials: canViewProjectFinancials(user.role),
+				canViewRates: canUserViewProjectRateData(user, project),
+				isEmployeeView
+			}
+		};
+	} catch (e) {
+		if (isRedirect(e) || isHttpError(e)) throw e;
+		console.error(e);
+		throw error(500, 'Грешка при зареждане на данните.');
+	}
 };
 
 export const actions: Actions = {

@@ -1,4 +1,4 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { fail, redirect, error, isHttpError, isRedirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
@@ -19,6 +19,7 @@ const clientSchema = z.object({
 	legalName: z.string().trim().min(2, 'Въведете правното наименование.').max(160, 'Името е твърде дълго.'),
 	registrationNumber: z.string().trim().max(64, 'Регистрационният номер е твърде дълъг.').optional(),
 	vatNumber: z.string().trim().max(64, 'ДДС номерът е твърде дълъг.').optional(),
+	mol: z.string().trim().max(160, 'МОЛ е твърде дълъг.').optional(),
 	billingAddress: z.string().trim().max(500, 'Адресът е твърде дълъг.').optional(),
 	defaultPaymentTermDays: z.union([
 		z.literal(''),
@@ -43,6 +44,7 @@ function buildClientInput(formData: FormData) {
 		legalName: String(formData.get('legalName') ?? ''),
 		registrationNumber: String(formData.get('registrationNumber') ?? ''),
 		vatNumber: String(formData.get('vatNumber') ?? ''),
+		mol: String(formData.get('mol') ?? ''),
 		billingAddress: String(formData.get('billingAddress') ?? ''),
 		defaultPaymentTermDays: String(formData.get('defaultPaymentTermDays') ?? ''),
 		status: String(formData.get('status') ?? 'active')
@@ -63,6 +65,7 @@ function normalizeClientPayload(data: z.infer<typeof clientSchema>) {
 		legalName: data.legalName.replace(/\s+/g, ' ').trim(),
 		registrationNumber: normalizeOptionalText(data.registrationNumber ?? ''),
 		vatNumber: normalizeOptionalText(data.vatNumber ?? ''),
+		mol: normalizeOptionalText(data.mol ?? ''),
 		billingAddress: normalizeOptionalMultilineText(data.billingAddress ?? ''),
 		defaultPaymentTermDays: data.defaultPaymentTermDays === '' ? null : data.defaultPaymentTermDays,
 		status: data.status
@@ -89,35 +92,41 @@ async function getCompanyOrRedirect() {
 }
 
 export const load: PageServerLoad = async ({ parent }) => {
-	const { user } = await parent();
-	if (!canAccessClientRegistry(user.role)) {
-		redirect(302, '/dashboard');
-	}
+	try {
+		const { user } = await parent();
+		if (!canAccessClientRegistry(user.role)) {
+			redirect(302, '/dashboard');
+		}
 
-	const company = await getCompanyOrRedirect();
+		const company = await getCompanyOrRedirect();
 
-	const clients = await db.client.findMany({
-		where: { companyId: company.id },
-		orderBy: [{ isProtectedSystem: 'desc' }, { status: 'asc' }, { legalName: 'asc' }],
-		include: {
-			contacts: {
-				orderBy: [{ name: 'asc' }]
-			},
-			_count: {
-				select: { projects: true }
+		const clients = await db.client.findMany({
+			where: { companyId: company.id },
+			orderBy: [{ isProtectedSystem: 'desc' }, { status: 'asc' }, { legalName: 'asc' }],
+			include: {
+				contacts: {
+					orderBy: [{ name: 'asc' }]
+				},
+				_count: {
+					select: { projects: true }
+				}
 			}
-		}
-	});
+		});
 
-	return {
-		clients,
-		permissions: {
-			canCreateClient: canCreateOrManageClients(user.role),
-			canManageContacts: canManageClientContacts(user.role),
-			canChangeLifecycle: canChangeClientLifecycle(user.role),
-			canEditBilling: canEditClientBilling(user.role)
-		}
-	};
+		return {
+			clients,
+			permissions: {
+				canCreateClient: canCreateOrManageClients(user.role),
+				canManageContacts: canManageClientContacts(user.role),
+				canChangeLifecycle: canChangeClientLifecycle(user.role),
+				canEditBilling: canEditClientBilling(user.role)
+			}
+		};
+	} catch (e) {
+		if (isRedirect(e) || isHttpError(e)) throw e;
+		console.error(e);
+		throw error(500, 'Грешка при зареждане на данните.');
+	}
 };
 
 export const actions: Actions = {

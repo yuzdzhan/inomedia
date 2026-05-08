@@ -1,14 +1,20 @@
-import { redirect, fail } from '@sveltejs/kit';
+import { redirect, fail, error, isHttpError, isRedirect } from '@sveltejs/kit';
 import { auth } from '$lib/server/auth';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals, url }) => {
-	const company = await db.company.findFirst();
-	if (!company) redirect(302, '/bootstrap');
-	if (locals.user) redirect(302, '/dashboard');
-	return { bootstrapped: url.searchParams.get('bootstrapped') === '1' };
+	try {
+		const company = await db.company.findFirst();
+		if (!company) redirect(302, '/bootstrap');
+		if (locals.user) redirect(302, '/dashboard');
+		return { bootstrapped: url.searchParams.get('bootstrapped') === '1' };
+	} catch (e) {
+		if (isRedirect(e) || isHttpError(e)) throw e;
+		console.error(e);
+		throw error(500, 'Грешка при зареждане на данните.');
+	}
 };
 
 export const actions: Actions = {

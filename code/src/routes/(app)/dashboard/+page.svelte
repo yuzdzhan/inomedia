@@ -81,8 +81,8 @@
 	<div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:24px;">
 		<div class="stat" style="padding:14px;">
 			<div class="stat-label">Незафактурирано</div>
-			<div class="stat-value amount">—</div>
-			<div class="stat-delta">по клиенти</div>
+			<div class="stat-value amount">{fmtMoney(data.uninvoicedTotalCents)}</div>
+			<div class="stat-delta">{data.uninvoicedByClient.length} клиента</div>
 		</div>
 		<div class="stat" style="padding:14px;">
 			<div class="stat-label">Постъпления / месец</div>
@@ -92,7 +92,7 @@
 		<div class="stat" style="padding:14px;">
 			<div class="stat-label">Просрочени фактури</div>
 			<div class="stat-value amount" style={data.overdueAmountCents > 0 ? 'color:var(--danger)' : ''}>{fmtMoney(data.overdueAmountCents)}</div>
-			<div class="stat-delta">{data.unpaidInvoices.filter(i => i.status === 'overdue').length} фактури</div>
+			<div class="stat-delta">{data.overdueInvoiceCount} фактури</div>
 		</div>
 		<div class="stat" style="padding:14px;">
 			<div class="stat-label">Касов баланс</div>
@@ -167,19 +167,16 @@
 				<a href="/invoiceable-work" class="btn btn-accent btn-sm">Издай фактури</a>
 			</div>
 			<div style="padding:0 16px;">
-				{#if data.unpaidInvoices.length > 0}
-					{@const totalUnpaid = data.unpaidInvoices.reduce((s, i) => s + (i.grossTotalCents - i.paidTotalCents), 0)}
-					{#each [...new Map(data.unpaidInvoices.map(i => [i.client.legalName, i])).values()].slice(0, 5) as inv, idx}
-						{@const clientInvs = data.unpaidInvoices.filter(i => i.client.legalName === inv.client.legalName)}
-						{@const clientAmt = clientInvs.reduce((s, i) => s + (i.grossTotalCents - i.paidTotalCents), 0)}
-						{@const pct = totalUnpaid > 0 ? Math.round((clientAmt / totalUnpaid) * 100) : 0}
+				{#if data.uninvoicedByClient.length > 0}
+					{#each data.uninvoicedByClient.slice(0, 5) as client}
+						{@const pct = data.uninvoicedTotalCents > 0 ? Math.round((client.totalAmountCents / data.uninvoicedTotalCents) * 100) : 0}
 						<div style="padding:12px 0; border-bottom:1px solid var(--border-soft);">
 							<div class="row-between" style="margin-bottom:6px;">
-								<span style="font-weight:500;">{inv.client.legalName}</span>
-								<span class="amount" style="font-weight:500;">{fmtMoney(clientAmt)} EUR</span>
+								<span style="font-weight:500;">{client.legalName}</span>
+								<span class="amount" style="font-weight:500;">{fmtMoney(client.totalAmountCents)} EUR</span>
 							</div>
 							<div class="row-between">
-								<span class="muted" style="font-size:12px;">{clientInvs.length} {clientInvs.length === 1 ? 'фактура' : 'фактури'}</span>
+								<span class="muted" style="font-size:12px;">фактурируемо</span>
 								<div class="burn-bar" style="width:100px;">
 									<div class="burn-bar-fill" style="width:{pct}%; background:var(--accent);"></div>
 								</div>
@@ -187,8 +184,8 @@
 						</div>
 					{/each}
 					<div style="padding:12px 0; display:flex; justify-content:space-between;">
-						<span style="font-weight:500;">Общо неплатено</span>
-						<span class="amount" style="font-weight:600; font-size:14px;">{fmtMoney(data.unpaidInvoices.reduce((s, i) => s + (i.grossTotalCents - i.paidTotalCents), 0))} EUR</span>
+						<span style="font-weight:500;">Общо незафактурирано</span>
+						<span class="amount" style="font-weight:600; font-size:14px;">{fmtMoney(data.uninvoicedTotalCents)} EUR</span>
 					</div>
 				{:else}
 					<div style="padding:20px 0; text-align:center;" class="muted">Няма незафактурирана работа.</div>
@@ -205,8 +202,8 @@
 				<div>
 					<h3 class="card-title">Неплатени фактури</h3>
 					<div class="card-sub">
-						{data.unpaidInvoices.filter(i => i.status === 'overdue').length} просрочени ·
-						{data.unpaidInvoices.filter(i => i.status === 'issued').length} издадени
+						{data.overdueInvoiceCount} просрочени ·
+						{data.unpaidInvoices.filter(i => i.status !== 'overdue').length} издадени
 					</div>
 				</div>
 			</div>

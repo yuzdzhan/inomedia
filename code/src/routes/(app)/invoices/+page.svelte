@@ -5,7 +5,7 @@
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let activeInvoiceId = $state<string | null>(null);
-	let filterStatus = $state((data.filters as any)?.status ?? '');
+	let filterStatus = $derived(data.filters.status);
 
 	function draftFormState() {
 		return form as { draftId?: string; draftError?: string; draftSuccess?: string } | null;
@@ -54,7 +54,7 @@
 	}
 
 	function isFinanceUser() {
-		return (data as any).user?.role === 'admin' || (data as any).user?.role === 'accountant';
+		return data.user?.role === 'admin' || data.user?.role === 'accountant';
 	}
 
 	function todayInputValue() {
@@ -201,11 +201,11 @@
 		<select class="select" name="clientId" style="width:180px;">
 			<option value="">Всички клиенти</option>
 			{#each data.clients as client}
-				<option value={client.id} selected={(data.filters as any)?.clientId === client.id}>{client.legalName}</option>
+				<option value={client.id} selected={data.filters.clientId === client.id}>{client.legalName}</option>
 			{/each}
 		</select>
-		<input class="input" type="date" name="dateFrom" value={(data.filters as any)?.dateFrom ?? ''} style="width:130px;" />
-		<input class="input" type="date" name="dateTo" value={(data.filters as any)?.dateTo ?? ''} style="width:130px;" />
+		<input class="input" type="date" name="dateFrom" value={data.filters.dateFrom} style="width:130px;" />
+		<input class="input" type="date" name="dateTo" value={data.filters.dateTo} style="width:130px;" />
 		<button type="submit" class="btn btn-secondary btn-sm">Приложи</button>
 	</form>
 </div>
@@ -230,8 +230,7 @@
 				<tr class={invoice.status === 'overdue' ? 'highlight-amber' : ''}>
 					<td class="amount" style="font-weight:{invoice.status === 'draft' ? 400 : 500};">
 						<a href="/invoices/{invoice.id}" style="color:inherit;">{invoice.invoiceNumber ?? 'Без номер'}</a>
-						{#if invoice.isStaleDraft}<Icon name="refresh" size={11}/>{/if}
-					</td>
+						</td>
 					<td>{invoice.client.legalName}</td>
 					<td class="amount muted">{fmtDate(invoice.issueDate)}</td>
 					<td class="amount muted">{fmtDate(invoice.dueDate)}</td>

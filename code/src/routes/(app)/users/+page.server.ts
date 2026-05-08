@@ -1,4 +1,4 @@
-import { redirect, fail } from '@sveltejs/kit';
+import { redirect, fail, error, isHttpError, isRedirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import { db } from '$lib/server/db';
 import { auth } from '$lib/server/auth';
@@ -23,44 +23,50 @@ function normalizeRateEntry(input: {
 }
 
 export const load: PageServerLoad = async ({ parent }) => {
-	const { user } = await parent();
-	if (user.role !== 'admin') {
-		redirect(302, '/dashboard');
-	}
+	try {
+		const { user } = await parent();
+		if (user.role !== 'admin') {
+			redirect(302, '/dashboard');
+		}
 
-	const [company, users] = await db.$transaction([
-		db.company.findFirst({
-			select: {
-				currency: true
-			}
-		}),
-		db.user.findMany({
-			orderBy: [{ status: 'asc' }, { lastName: 'asc' }, { firstName: 'asc' }],
-			select: {
-				id: true,
-				firstName: true,
-				lastName: true,
-				email: true,
-				role: true,
-				status: true,
-				hourlyRateCents: true,
-				createdAt: true,
-				deactivatedAt: true,
-				rateHistoryEntries: {
-					orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-					select: {
-						id: true,
-						effectiveFrom: true,
-						costRateCents: true,
-						billableRateCents: true,
-						createdAt: true
+		const [company, users] = await db.$transaction([
+			db.company.findFirst({
+				select: {
+					currency: true
+				}
+			}),
+			db.user.findMany({
+				orderBy: [{ status: 'asc' }, { lastName: 'asc' }, { firstName: 'asc' }],
+				select: {
+					id: true,
+					firstName: true,
+					lastName: true,
+					email: true,
+					role: true,
+					status: true,
+					hourlyRateCents: true,
+					createdAt: true,
+					deactivatedAt: true,
+					rateHistoryEntries: {
+						orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+						select: {
+							id: true,
+							effectiveFrom: true,
+							costRateCents: true,
+							billableRateCents: true,
+							createdAt: true
+						}
 					}
 				}
-			}
-		})
-	]);
+			})
+		]);
 
-	return { company, users, today: formatDateInput(new Date()) };
+		return { company, users, today: formatDateInput(new Date()) };
+	} catch (e) {
+		if (isRedirect(e) || isHttpError(e)) throw e;
+		console.error(e);
+		throw error(500, 'Грешка при зареждане на данните.');
+	}
 };
 
 const createUserSchema = z.object({

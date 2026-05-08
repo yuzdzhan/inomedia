@@ -63,6 +63,9 @@
 {#if (form as any)?.deleteError}
 	<div class="alert danger" style="margin-bottom:12px;">{(form as any).deleteError}</div>
 {/if}
+{#if data.hitLimit}
+	<div class="alert warning" style="margin-bottom:12px;">Показани са само първите 300 записа. Приложете филтри, за да видите по-стари записи.</div>
+{/if}
 
 <!-- Filters -->
 <form method="GET" style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; margin-bottom:12px;">

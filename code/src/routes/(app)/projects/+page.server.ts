@@ -1,4 +1,4 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { fail, redirect, error, isHttpError, isRedirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
@@ -143,119 +143,125 @@ async function validateProjectRelations(companyId: string, input: ReturnType<typ
 }
 
 export const load: PageServerLoad = async ({ parent }) => {
-	const { user } = await parent();
-	if (!canAccessProjectRegistry(user.role)) {
-		redirect(302, '/dashboard');
-	}
+	try {
+		const { user } = await parent();
+		if (!canAccessProjectRegistry(user.role)) {
+			redirect(302, '/dashboard');
+		}
 
-	const company = await getCompanyOrRedirect();
-	const canManageProjects = canCreateOrManageProjects(user.role);
+		const company = await getCompanyOrRedirect();
+		const canManageProjects = canCreateOrManageProjects(user.role);
 
-	const [clients, users, projects] = await Promise.all([
-		canManageProjects
-			? db.client.findMany({
-					where: { companyId: company.id },
-					orderBy: [{ status: 'asc' }, { legalName: 'asc' }],
-					select: {
-						id: true,
-						legalName: true,
-						status: true,
-						isInternal: true
-					}
-				})
-			: [],
-		canManageProjects
-			? db.user.findMany({
-					orderBy: [{ status: 'asc' }, { lastName: 'asc' }, { firstName: 'asc' }],
-					select: {
-						id: true,
-						firstName: true,
-						lastName: true,
-						role: true,
-						status: true
-					}
-				})
-			: [],
-		db.project.findMany({
-			where: {
-				client: {
-					companyId: company.id
+		const [clients, users, projects] = await Promise.all([
+			canManageProjects
+				? db.client.findMany({
+						where: { companyId: company.id },
+						orderBy: [{ status: 'asc' }, { legalName: 'asc' }],
+						select: {
+							id: true,
+							legalName: true,
+							status: true,
+							isInternal: true
+						}
+					})
+				: [],
+			canManageProjects
+				? db.user.findMany({
+						orderBy: [{ status: 'asc' }, { lastName: 'asc' }, { firstName: 'asc' }],
+						select: {
+							id: true,
+							firstName: true,
+							lastName: true,
+							role: true,
+							status: true
+						}
+					})
+				: [],
+			db.project.findMany({
+				where: {
+					client: {
+						companyId: company.id
+					},
+					...(user.role === 'employee'
+						? {
+								members: {
+									some: {
+										userId: user.id
+									}
+								}
+							}
+						: {})
 				},
-				...(user.role === 'employee'
-					? {
-							members: {
-								some: {
-									userId: user.id
+				orderBy: [{ status: 'asc' }, { name: 'asc' }],
+				include: {
+					client: {
+						select: {
+							id: true,
+							legalName: true,
+							status: true,
+							isInternal: true
+						}
+					},
+					primaryManager: {
+						select: {
+							id: true,
+							firstName: true,
+							lastName: true,
+							role: true,
+							status: true
+						}
+					},
+					members: {
+						orderBy: [
+							{ user: { status: 'asc' } },
+							{ user: { lastName: 'asc' } },
+							{ user: { firstName: 'asc' } }
+						],
+						include: {
+							user: {
+								select: {
+									id: true,
+									firstName: true,
+									lastName: true,
+									role: true,
+									status: true
 								}
 							}
 						}
-					: {})
-			},
-			orderBy: [{ status: 'asc' }, { name: 'asc' }],
-			include: {
-				client: {
-					select: {
-						id: true,
-						legalName: true,
-						status: true,
-						isInternal: true
-					}
-				},
-				primaryManager: {
-					select: {
-						id: true,
-						firstName: true,
-						lastName: true,
-						role: true,
-						status: true
-					}
-				},
-				members: {
-					orderBy: [
-						{ user: { status: 'asc' } },
-						{ user: { lastName: 'asc' } },
-						{ user: { firstName: 'asc' } }
-					],
-					include: {
-						user: {
-							select: {
-								id: true,
-								firstName: true,
-								lastName: true,
-								role: true,
-								status: true
-							}
-						}
-					}
-				},
-				memberBillableRateOverrides: {
-					orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-					include: {
-						user: {
-							select: {
-								id: true,
-								firstName: true,
-								lastName: true
+					},
+					memberBillableRateOverrides: {
+						orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+						include: {
+							user: {
+								select: {
+									id: true,
+									firstName: true,
+									lastName: true
+								}
 							}
 						}
 					}
 				}
-			}
-		})
-	]);
+			})
+		]);
 
-	return {
-		company: { currency: company.currency },
-		clients,
-		users,
-		projects,
-		permissions: {
-			canManageProjects,
-			canViewFinancials: canViewProjectFinancials(user.role),
-			currentUserId: user.id,
-			currentUserRole: user.role
-		}
-	};
+		return {
+			company: { currency: company.currency },
+			clients,
+			users,
+			projects,
+			permissions: {
+				canManageProjects,
+				canViewFinancials: canViewProjectFinancials(user.role),
+				currentUserId: user.id,
+				currentUserRole: user.role
+			}
+		};
+	} catch (e) {
+		if (isRedirect(e) || isHttpError(e)) throw e;
+		console.error(e);
+		throw error(500, 'Грешка при зареждане на данните.');
+	}
 };
 
 export const actions: Actions = {

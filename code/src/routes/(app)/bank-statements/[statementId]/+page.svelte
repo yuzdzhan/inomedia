@@ -76,11 +76,11 @@
 	</div>
 </div>
 
-{#if (form as any)?.success}
-	<div class="alert success" style="margin-bottom:12px;">{(form as any).success}</div>
+{#if form?.success}
+	<div class="alert success" style="margin-bottom:12px;">{form.success}</div>
 {/if}
-{#if (form as any)?.error}
-	<div class="alert danger" style="margin-bottom:12px;">{(form as any).error}</div>
+{#if form?.error}
+	<div class="alert danger" style="margin-bottom:12px;">{form.error}</div>
 {/if}
 
 <!-- Auto-match summary -->

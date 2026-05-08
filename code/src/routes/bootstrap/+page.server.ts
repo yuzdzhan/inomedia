@@ -1,4 +1,4 @@
-import { redirect, fail } from '@sveltejs/kit';
+import { redirect, fail, error, isHttpError, isRedirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { auth } from '$lib/server/auth';
 import { logAuditEvent } from '$lib/server/audit';
@@ -7,11 +7,17 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async () => {
-	const company = await db.company.findFirst();
-	if (company) {
-		redirect(302, '/login');
+	try {
+		const company = await db.company.findFirst();
+		if (company) {
+			redirect(302, '/login');
+		}
+		return {};
+	} catch (e) {
+		if (isRedirect(e) || isHttpError(e)) throw e;
+		console.error(e);
+		throw error(500, 'Грешка при зареждане на данните.');
 	}
-	return {};
 };
 
 const bootstrapSchema = z.object({

@@ -1,7 +1,9 @@
+import { error, isHttpError, isRedirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ parent }) => {
+	try {
 	const { user } = await parent();
 	const company = await db.company.findFirst();
 
@@ -124,19 +126,21 @@ export const load: PageServerLoad = async ({ parent }) => {
 	const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
 	const [
-		overdueTaskCount,
-		unpaidExpensesCount,
+		overdueInvoiceAggregate,
 		statementMatchCounts,
 		recentAuditEvents,
 		activeProjectsList,
 		unpaidInvoicesList,
 		recentBankRows,
-		monthlyIncomeEntries
+		monthlyIncomeEntries,
+		uninvoicedTimeLogs,
+		uninvoicedFlatFeeTasks
 	] = await Promise.all([
-		db.task.count({
-			where: { status: { in: ['todo', 'in_progress'] }, deadlineDate: { lt: today } }
+		db.invoice.aggregate({
+			where: { status: 'overdue' },
+			_sum: { grossTotalCents: true, paidTotalCents: true },
+			_count: { _all: true }
 		}),
-		db.expense.count({ where: { status: 'unpaid' } }),
 		db.bankStatementRow.groupBy({
 			by: ['matchState'],
 			_count: { _all: true }
@@ -196,11 +200,57 @@ export const load: PageServerLoad = async ({ parent }) => {
 		db.ledgerEntry.findMany({
 			where: {
 				entryDate: { gte: startOfMonth },
-				amountCents: { gt: 0 }
+				entryType: { in: ['invoice_payment', 'standalone_income', 'generic_credit'] }
 			},
 			select: { amountCents: true }
+		}),
+		db.taskTimeLog.findMany({
+			where: {
+				invoicedAt: null,
+				task: {
+					billingType: 'hourly',
+					taskList: { project: { isBillable: true, ...(company ? { client: { companyId: company.id } } : {}) } }
+				}
+			},
+			select: {
+				durationMinutes: true,
+				snapshotBillableRateCents: true,
+				task: { select: { taskList: { select: { project: { select: { client: { select: { id: true, legalName: true } } } } } } } }
+			}
+		}),
+		db.task.findMany({
+			where: {
+				billingType: 'flat_fee',
+				flatFeeAmountCents: { gt: 0 },
+				invoiceSelections: { none: {} },
+				taskList: { project: { isBillable: true, ...(company ? { client: { companyId: company.id } } : {}) } }
+			},
+			select: {
+				flatFeeAmountCents: true,
+				taskList: { select: { project: { select: { client: { select: { id: true, legalName: true } } } } } }
+			}
 		})
 	]);
+
+	const clientAmounts = new Map<string, { legalName: string; totalCents: number }>();
+	for (const log of uninvoicedTimeLogs) {
+		const client = log.task.taskList.project.client;
+		const cents = Math.round(((log.snapshotBillableRateCents ?? 0) * log.durationMinutes) / 60);
+		if (cents <= 0) continue;
+		const prev = clientAmounts.get(client.id) ?? { legalName: client.legalName, totalCents: 0 };
+		clientAmounts.set(client.id, { legalName: client.legalName, totalCents: prev.totalCents + cents });
+	}
+	for (const task of uninvoicedFlatFeeTasks) {
+		const client = task.taskList.project.client;
+		const cents = task.flatFeeAmountCents ?? 0;
+		if (cents <= 0) continue;
+		const prev = clientAmounts.get(client.id) ?? { legalName: client.legalName, totalCents: 0 };
+		clientAmounts.set(client.id, { legalName: client.legalName, totalCents: prev.totalCents + cents });
+	}
+	const uninvoicedByClient = [...clientAmounts.entries()]
+		.map(([id, v]) => ({ id, legalName: v.legalName, totalAmountCents: v.totalCents }))
+		.sort((a, b) => b.totalAmountCents - a.totalAmountCents);
+	const uninvoicedTotalCents = uninvoicedByClient.reduce((s, c) => s + c.totalAmountCents, 0);
 
 	const containers = await db.moneyContainer.findMany({
 		where: company ? { companyId: company.id } : {},
@@ -216,11 +266,10 @@ export const load: PageServerLoad = async ({ parent }) => {
 	const cashBalanceCents = balances.reduce((s, b) => s + b.balance, 0);
 	const monthlyIncomeCents = monthlyIncomeEntries.reduce((s, e) => s + e.amountCents, 0);
 
-	const overdueInvoices = unpaidInvoicesList.filter((inv) => inv.status === 'overdue');
-	const overdueAmountCents = overdueInvoices.reduce(
-		(s, inv) => s + (inv.grossTotalCents - inv.paidTotalCents),
-		0
-	);
+	const overdueAmountCents =
+		(overdueInvoiceAggregate._sum.grossTotalCents ?? 0) -
+		(overdueInvoiceAggregate._sum.paidTotalCents ?? 0);
+	const overdueInvoiceCount = overdueInvoiceAggregate._count._all;
 
 	const matchCountMap: Record<string, number> = {};
 	for (const row of statementMatchCounts) {
@@ -248,12 +297,13 @@ export const load: PageServerLoad = async ({ parent }) => {
 	return {
 		role: user.role as 'admin',
 		firstName: user.firstName,
-		overdueTaskCount,
-		unpaidExpensesCount,
 		overdueAmountCents,
+		overdueInvoiceCount,
 		cashBalanceCents,
 		monthlyIncomeCents,
 		balances,
+		uninvoicedByClient,
+		uninvoicedTotalCents,
 		activeProjects,
 		unpaidInvoices: unpaidInvoicesList,
 		recentBankRows,
@@ -265,4 +315,9 @@ export const load: PageServerLoad = async ({ parent }) => {
 		recentAuditEvents,
 		recentLedgerEntries: []
 	};
+	} catch (e) {
+		if (isRedirect(e) || isHttpError(e)) throw e;
+		console.error(e);
+		throw error(500, 'Грешка при зареждане на данните.');
+	}
 };

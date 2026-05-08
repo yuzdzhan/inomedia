@@ -185,6 +185,11 @@
 					<input class="input" id="create-defaultPaymentTermDays" name="defaultPaymentTermDays" type="number" min="1" max="365" value={fieldValue('defaultPaymentTermDays')} />
 					{#if fieldError('defaultPaymentTermDays')}<span style="color:var(--danger); font-size:11px;">{fieldError('defaultPaymentTermDays')}</span>{/if}
 				</div>
+				<div class="field" style="grid-column: 1 / -1;">
+					<label class="label" for="create-mol">МОЛ</label>
+					<input class="input" id="create-mol" name="mol" type="text" value={fieldValue('mol')} />
+					{#if fieldError('mol')}<span style="color:var(--danger); font-size:11px;">{fieldError('mol')}</span>{/if}
+				</div>
 			</div>
 			<div class="field" style="margin-bottom:12px;">
 				<label class="label" for="create-billingAddress">Адрес за фактуриране</label>
@@ -289,6 +294,12 @@
 												value={clientValue(client.id, 'defaultPaymentTermDays', client.defaultPaymentTermDays)}
 												disabled={client.isProtectedSystem || !data.permissions.canEditBilling} />
 										</div>
+										<div class="field" style="grid-column: 1 / -1;">
+											<label class="label" for="mol-{client.id}">МОЛ</label>
+											<input class="input" id="mol-{client.id}" name="mol" type="text"
+												value={clientValue(client.id, 'mol', client.mol)}
+												disabled={client.isProtectedSystem || !data.permissions.canEditBilling} />
+										</div>
 									</div>
 									<div class="field" style="margin-bottom:12px;">
 										<label class="label" for="billingAddress-{client.id}">Адрес за фактуриране</label>
@@ -376,7 +387,7 @@
 													<span style="font-size:12px; color:var(--text-muted);">Нов контакт</span>
 												</button>
 												{#if isNewContactExpanded(client.id)}
-													<form method="POST" action="?/createContact" style="padding:14px; background:var(--surface); border-top:1px solid var(--border);">
+													<form method="POST" action="?/addContact" style="padding:14px; background:var(--surface); border-top:1px solid var(--border);">
 														<input type="hidden" name="clientId" value={client.id} />
 														<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">
 															<div class="field">

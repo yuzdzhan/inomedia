@@ -1,4 +1,4 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { fail, redirect, error, isHttpError, isRedirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
 import { ensureMoneyContainers } from '$lib/server/ledger';
@@ -17,95 +17,101 @@ async function getCompanyOrRedirect() {
 }
 
 export const load: PageServerLoad = async ({ parent, url }) => {
-	const { user } = await parent();
-	if (!canManageFinances(user.role)) {
-		redirect(302, '/dashboard');
-	}
-
-	const company = await getCompanyOrRedirect();
-
-	// Bootstrap containers if they don't exist yet
-	const containers = await ensureMoneyContainers(company.id);
-
-	// Load ledger entries for each container with aggregated balance
-	const [bankContainer, cashboxContainer] = await Promise.all(
-		containers.map(async (container) => {
-			const aggregate = await db.ledgerEntry.aggregate({
-				where: { containerId: container.id },
-				_sum: { amountCents: true }
-			});
-			const sumCents = aggregate._sum.amountCents ?? 0;
-			return {
-				...container,
-				currentBalanceCents: container.openingBalanceCents + sumCents
-			};
-		})
-	);
-
-	// Filters
-	const filterContainerId = url.searchParams.get('containerId') ?? '';
-	const filterEntryType = url.searchParams.get('entryType') ?? '';
-	const filterDateFrom = url.searchParams.get('dateFrom') ?? '';
-	const filterDateTo = url.searchParams.get('dateTo') ?? '';
-	const filterSearch = url.searchParams.get('search') ?? '';
-
-	const containerIds = containers.map((c) => c.id);
-	const validEntryTypes = [
-		'invoice_payment',
-		'standalone_income',
-		'expense_payment',
-		'generic_credit',
-		'generic_debit',
-		'transfer_out',
-		'transfer_in'
-	] as const;
-	type EntryType = (typeof validEntryTypes)[number];
-
-	const entriesWhere: Record<string, unknown> = {
-		containerId: filterContainerId && containerIds.includes(filterContainerId)
-			? filterContainerId
-			: { in: containerIds },
-		...(filterEntryType && validEntryTypes.includes(filterEntryType as EntryType)
-			? { entryType: filterEntryType as EntryType }
-			: {}),
-		...(filterDateFrom || filterDateTo
-			? {
-					entryDate: {
-						...(filterDateFrom ? { gte: new Date(filterDateFrom) } : {}),
-						...(filterDateTo ? { lte: new Date(filterDateTo) } : {})
-					}
-				}
-			: {}),
-		...(filterSearch
-			? { description: { contains: filterSearch, mode: 'insensitive' } }
-			: {})
-	};
-
-	const recentEntries = await db.ledgerEntry.findMany({
-		where: entriesWhere,
-		orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }],
-		take: 50,
-		include: {
-			container: { select: { id: true, name: true, containerType: true } },
-			createdByUser: { select: { firstName: true, lastName: true } }
+	try {
+		const { user } = await parent();
+		if (!canManageFinances(user.role)) {
+			redirect(302, '/dashboard');
 		}
-	});
 
-	return {
-		bank: bankContainer,
-		cashbox: cashboxContainer,
-		containers,
-		recentEntries,
-		filters: {
-			containerId: filterContainerId,
-			entryType: filterEntryType,
-			dateFrom: filterDateFrom,
-			dateTo: filterDateTo,
-			search: filterSearch
-		},
-		canManage: canManageFinances(user.role),
-		isAdmin: user.role === 'admin'
-	};
+		const company = await getCompanyOrRedirect();
+
+		// Bootstrap containers if they don't exist yet
+		const containers = await ensureMoneyContainers(company.id);
+
+		// Load ledger entries for each container with aggregated balance
+		const [bankContainer, cashboxContainer] = await Promise.all(
+			containers.map(async (container) => {
+				const aggregate = await db.ledgerEntry.aggregate({
+					where: { containerId: container.id },
+					_sum: { amountCents: true }
+				});
+				const sumCents = aggregate._sum.amountCents ?? 0;
+				return {
+					...container,
+					currentBalanceCents: container.openingBalanceCents + sumCents
+				};
+			})
+		);
+
+		// Filters
+		const filterContainerId = url.searchParams.get('containerId') ?? '';
+		const filterEntryType = url.searchParams.get('entryType') ?? '';
+		const filterDateFrom = url.searchParams.get('dateFrom') ?? '';
+		const filterDateTo = url.searchParams.get('dateTo') ?? '';
+		const filterSearch = url.searchParams.get('search') ?? '';
+
+		const containerIds = containers.map((c) => c.id);
+		const validEntryTypes = [
+			'invoice_payment',
+			'standalone_income',
+			'expense_payment',
+			'generic_credit',
+			'generic_debit',
+			'transfer_out',
+			'transfer_in'
+		] as const;
+		type EntryType = (typeof validEntryTypes)[number];
+
+		const entriesWhere: Record<string, unknown> = {
+			containerId: filterContainerId && containerIds.includes(filterContainerId)
+				? filterContainerId
+				: { in: containerIds },
+			...(filterEntryType && validEntryTypes.includes(filterEntryType as EntryType)
+				? { entryType: filterEntryType as EntryType }
+				: {}),
+			...(filterDateFrom || filterDateTo
+				? {
+						entryDate: {
+							...(filterDateFrom ? { gte: new Date(filterDateFrom) } : {}),
+							...(filterDateTo ? { lte: new Date(filterDateTo) } : {})
+						}
+					}
+				: {}),
+			...(filterSearch
+				? { description: { contains: filterSearch, mode: 'insensitive' } }
+				: {})
+		};
+
+		const recentEntries = await db.ledgerEntry.findMany({
+			where: entriesWhere,
+			orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }],
+			take: 50,
+			include: {
+				container: { select: { id: true, name: true, containerType: true } },
+				createdByUser: { select: { firstName: true, lastName: true } }
+			}
+		});
+
+		return {
+			bank: bankContainer,
+			cashbox: cashboxContainer,
+			containers,
+			recentEntries,
+			filters: {
+				containerId: filterContainerId,
+				entryType: filterEntryType,
+				dateFrom: filterDateFrom,
+				dateTo: filterDateTo,
+				search: filterSearch
+			},
+			canManage: canManageFinances(user.role),
+			isAdmin: user.role === 'admin'
+		};
+	} catch (e) {
+		if (isRedirect(e) || isHttpError(e)) throw e;
+		console.error(e);
+		throw error(500, 'Грешка при зареждане на данните.');
+	}
 };
 
 export const actions: Actions = {

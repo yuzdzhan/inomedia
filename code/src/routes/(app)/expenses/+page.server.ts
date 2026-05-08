@@ -1,4 +1,4 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { fail, redirect, error, isHttpError, isRedirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
@@ -108,150 +108,156 @@ function generateOccurrenceDates(
 // ─── Load ──────────────────────────────────────────────────────────────────
 
 export const load: PageServerLoad = async ({ parent, url }) => {
-	const { user } = await parent();
+	try {
+		const { user } = await parent();
 
-	if (!canViewExpenses(user.role)) {
-		redirect(302, '/dashboard');
-	}
-
-	const company = await db.company.findFirst();
-	if (!company) {
-		redirect(302, '/bootstrap');
-	}
-
-	const categories = await db.expenseCategory.findMany({
-		where: { companyId: company.id },
-		orderBy: [{ isActive: 'desc' }, { name: 'asc' }]
-	});
-
-	const activeCategories = categories.filter((c) => c.isActive);
-
-	// Load clients and their projects for linking
-	const clients = await db.client.findMany({
-		where: { companyId: company.id, status: 'active' },
-		orderBy: { legalName: 'asc' },
-		include: {
-			projects: {
-				where: { status: 'active' },
-				orderBy: { name: 'asc' },
-				include: {
-					members: { select: { userId: true } }
-				}
-			}
+		if (!canViewExpenses(user.role)) {
+			redirect(302, '/dashboard');
 		}
-	});
 
-	// For managers: only show projects they manage or are member of
-	let accessibleProjects: string[] = [];
-	if (user.role === 'manager') {
-		const managerProjects = await db.project.findMany({
-			where: {
-				OR: [
-					{ primaryManagerUserId: user.id },
-					{ members: { some: { userId: user.id } } }
-				]
-			},
-			select: { id: true }
+		const company = await db.company.findFirst();
+		if (!company) {
+			redirect(302, '/bootstrap');
+		}
+
+		const categories = await db.expenseCategory.findMany({
+			where: { companyId: company.id },
+			orderBy: [{ isActive: 'desc' }, { name: 'asc' }]
 		});
-		accessibleProjects = managerProjects.map((p) => p.id);
-	}
 
-	// Load money containers (ensure they exist)
-	const moneyContainers = await ensureMoneyContainers(company.id);
+		const activeCategories = categories.filter((c) => c.isActive);
 
-	// Read filter params
-	const filterStatus = url.searchParams.get('status') ?? '';
-	const filterCategoryId = url.searchParams.get('categoryId') ?? '';
-	const filterClientId = url.searchParams.get('clientId') ?? '';
-	const filterProjectId = url.searchParams.get('projectId') ?? '';
-	const filterDateFrom = url.searchParams.get('dateFrom') ?? '';
-	const filterDateTo = url.searchParams.get('dateTo') ?? '';
-
-	// Load expenses based on role + filters
-	const baseWhere =
-		user.role === 'manager'
-			? { companyId: company.id, projectId: { in: accessibleProjects } }
-			: { companyId: company.id };
-
-	const expenseWhere = {
-		...baseWhere,
-		...(filterStatus === 'paid' || filterStatus === 'unpaid' ? { status: filterStatus as 'paid' | 'unpaid' } : {}),
-		...(filterCategoryId ? { categoryId: filterCategoryId } : {}),
-		...(filterClientId ? { clientId: filterClientId } : {}),
-		...(filterProjectId ? { projectId: filterProjectId } : {}),
-		...(filterDateFrom || filterDateTo
-			? {
-					incurredDate: {
-						...(filterDateFrom ? { gte: new Date(filterDateFrom) } : {}),
-						...(filterDateTo ? { lte: new Date(filterDateTo) } : {})
+		// Load clients and their projects for linking
+		const clients = await db.client.findMany({
+			where: { companyId: company.id, status: 'active' },
+			orderBy: { legalName: 'asc' },
+			include: {
+				projects: {
+					where: { status: 'active' },
+					orderBy: { name: 'asc' },
+					include: {
+						members: { select: { userId: true } }
 					}
 				}
-			: {})
-	};
+			}
+		});
 
-	const expenses = await db.expense.findMany({
-		where: expenseWhere,
-		orderBy: { incurredDate: 'desc' },
-		include: {
-			category: true,
-			client: { select: { id: true, legalName: true } },
-			project: { select: { id: true, name: true } },
-			createdByUser: { select: { id: true, firstName: true, lastName: true } },
-			paidByUser: { select: { id: true, firstName: true, lastName: true } },
-			paidContainer: { select: { id: true, name: true, containerType: true } }
+		// For managers: only show projects they manage or are member of
+		let accessibleProjects: string[] = [];
+		if (user.role === 'manager') {
+			const managerProjects = await db.project.findMany({
+				where: {
+					OR: [
+						{ primaryManagerUserId: user.id },
+						{ members: { some: { userId: user.id } } }
+					]
+				},
+				select: { id: true }
+			});
+			accessibleProjects = managerProjects.map((p) => p.id);
 		}
-	});
 
-	// Load recurring templates (admin/accountant only)
-	const recurringTemplates = canManageRecurringTemplates(user.role)
-		? await db.recurringExpenseTemplate.findMany({
-				where: { companyId: company.id },
-				orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }],
-				include: {
-					category: true,
-					client: { select: { id: true, legalName: true } },
-					project: { select: { id: true, name: true } },
-					createdByUser: { select: { id: true, firstName: true, lastName: true } }
-				}
-			})
-		: [];
+		// Load money containers (ensure they exist)
+		const moneyContainers = await ensureMoneyContainers(company.id);
 
-	// Load all projects (for filter dropdown) visible to this user
-	const allVisibleProjects = await db.project.findMany({
-		where:
+		// Read filter params
+		const filterStatus = url.searchParams.get('status') ?? '';
+		const filterCategoryId = url.searchParams.get('categoryId') ?? '';
+		const filterClientId = url.searchParams.get('clientId') ?? '';
+		const filterProjectId = url.searchParams.get('projectId') ?? '';
+		const filterDateFrom = url.searchParams.get('dateFrom') ?? '';
+		const filterDateTo = url.searchParams.get('dateTo') ?? '';
+
+		// Load expenses based on role + filters
+		const baseWhere =
 			user.role === 'manager'
-				? { id: { in: accessibleProjects } }
-				: { client: { companyId: company.id } },
-		orderBy: [{ client: { legalName: 'asc' } }, { name: 'asc' }],
-		select: { id: true, name: true, clientId: true, client: { select: { legalName: true } } }
-	});
+				? { companyId: company.id, projectId: { in: accessibleProjects } }
+				: { companyId: company.id };
 
-	return {
-		categories,
-		activeCategories,
-		clients,
-		expenses,
-		recurringTemplates,
-		accessibleProjects,
-		moneyContainers,
-		allVisibleProjects,
-		filters: {
-			status: filterStatus,
-			categoryId: filterCategoryId,
-			clientId: filterClientId,
-			projectId: filterProjectId,
-			dateFrom: filterDateFrom,
-			dateTo: filterDateTo
-		},
-		permissions: {
-			canManageFinance: canManageFinanceExpenses(user.role),
-			canManageProject: canManageProjectExpenses(user.role),
-			canMarkPaid: canMarkPaid(user.role),
-			canManageCategories: canManageCategories(user.role),
-			canManageRecurring: canManageRecurringTemplates(user.role),
-			isManager: user.role === 'manager'
-		}
-	};
+		const expenseWhere = {
+			...baseWhere,
+			...(filterStatus === 'paid' || filterStatus === 'unpaid' ? { status: filterStatus as 'paid' | 'unpaid' } : {}),
+			...(filterCategoryId ? { categoryId: filterCategoryId } : {}),
+			...(filterClientId ? { clientId: filterClientId } : {}),
+			...(filterProjectId ? { projectId: filterProjectId } : {}),
+			...(filterDateFrom || filterDateTo
+				? {
+						incurredDate: {
+							...(filterDateFrom ? { gte: new Date(filterDateFrom) } : {}),
+							...(filterDateTo ? { lte: new Date(filterDateTo) } : {})
+						}
+					}
+				: {})
+		};
+
+		const expenses = await db.expense.findMany({
+			where: expenseWhere,
+			orderBy: { incurredDate: 'desc' },
+			include: {
+				category: true,
+				client: { select: { id: true, legalName: true } },
+				project: { select: { id: true, name: true } },
+				createdByUser: { select: { id: true, firstName: true, lastName: true } },
+				paidByUser: { select: { id: true, firstName: true, lastName: true } },
+				paidContainer: { select: { id: true, name: true, containerType: true } }
+			}
+		});
+
+		// Load recurring templates (admin/accountant only)
+		const recurringTemplates = canManageRecurringTemplates(user.role)
+			? await db.recurringExpenseTemplate.findMany({
+					where: { companyId: company.id },
+					orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }],
+					include: {
+						category: true,
+						client: { select: { id: true, legalName: true } },
+						project: { select: { id: true, name: true } },
+						createdByUser: { select: { id: true, firstName: true, lastName: true } }
+					}
+				})
+			: [];
+
+		// Load all projects (for filter dropdown) visible to this user
+		const allVisibleProjects = await db.project.findMany({
+			where:
+				user.role === 'manager'
+					? { id: { in: accessibleProjects } }
+					: { client: { companyId: company.id } },
+			orderBy: [{ client: { legalName: 'asc' } }, { name: 'asc' }],
+			select: { id: true, name: true, clientId: true, client: { select: { legalName: true } } }
+		});
+
+		return {
+			categories,
+			activeCategories,
+			clients,
+			expenses,
+			recurringTemplates,
+			accessibleProjects,
+			moneyContainers,
+			allVisibleProjects,
+			filters: {
+				status: filterStatus,
+				categoryId: filterCategoryId,
+				clientId: filterClientId,
+				projectId: filterProjectId,
+				dateFrom: filterDateFrom,
+				dateTo: filterDateTo
+			},
+			permissions: {
+				canManageFinance: canManageFinanceExpenses(user.role),
+				canManageProject: canManageProjectExpenses(user.role),
+				canMarkPaid: canMarkPaid(user.role),
+				canManageCategories: canManageCategories(user.role),
+				canManageRecurring: canManageRecurringTemplates(user.role),
+				isManager: user.role === 'manager'
+			}
+		};
+	} catch (e) {
+		if (isRedirect(e) || isHttpError(e)) throw e;
+		console.error(e);
+		throw error(500, 'Грешка при зареждане на данните.');
+	}
 };
 
 // ─── Actions ───────────────────────────────────────────────────────────────

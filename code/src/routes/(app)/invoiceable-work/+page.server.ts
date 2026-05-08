@@ -1,4 +1,4 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { fail, redirect, error, isHttpError, isRedirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
 import {
@@ -303,12 +303,18 @@ async function getInvoiceableContext(user: { id: string; role: string }, url: UR
 }
 
 export const load: PageServerLoad = async ({ parent, url }) => {
-	const { user } = await parent();
-	if (!canViewProjectFinancials(user.role) || user.role === 'employee') {
-		redirect(302, '/dashboard');
-	}
+	try {
+		const { user } = await parent();
+		if (!canViewProjectFinancials(user.role) || user.role === 'employee') {
+			redirect(302, '/dashboard');
+		}
 
-	return getInvoiceableContext(user, url);
+		return getInvoiceableContext(user, url);
+	} catch (e) {
+		if (isRedirect(e) || isHttpError(e)) throw e;
+		console.error(e);
+		throw error(500, 'Грешка при зареждане на данните.');
+	}
 };
 
 export const actions: Actions = {

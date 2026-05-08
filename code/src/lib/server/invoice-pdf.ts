@@ -6,6 +6,7 @@ type InvoicePdfParty = {
 	registrationNumber?: string | null;
 	vatNumber?: string | null;
 	address?: string | null;
+	molName?: string | null;
 };
 
 type InvoicePdfLine = {
@@ -22,9 +23,7 @@ export type InvoicePdfSnapshot = {
 	servicePeriodTo: string | null;
 	currency: string;
 	paymentMethod: string;
-	company: InvoicePdfParty & {
-		molName?: string | null;
-	};
+	company: InvoicePdfParty;
 	client: InvoicePdfParty;
 	lines: InvoicePdfLine[];
 	netTotalCents: number;
@@ -56,6 +55,14 @@ const A4_HEIGHT = 842;
 const PAGE_MARGIN = 48;
 const FONT_PATH = path.resolve(process.cwd(), 'static/fonts/Lato-Regular.ttf');
 
+// Colors: RGB 0–1
+const C_PURPLE: readonly [number, number, number] = [0.310, 0.216, 0.541];   // #4f378a
+const C_LAVENDER: readonly [number, number, number] = [0.820, 0.760, 0.960]; // soft lavender on purple
+const C_WHITE: readonly [number, number, number] = [1.0, 1.0, 1.0];
+const C_MUTED: readonly [number, number, number] = [0.435, 0.451, 0.502];    // #6f7380
+const C_LIGHT_BG: readonly [number, number, number] = [0.976, 0.980, 0.988]; // #f9fafb
+const C_BORDER: readonly [number, number, number] = [0.894, 0.902, 0.918];   // #e5e7eb
+
 let fontInfoPromise: Promise<TtfInfo> | null = null;
 
 function readUInt16(buffer: Buffer, offset: number) {
@@ -83,18 +90,9 @@ function formatPaymentMethod(value: string) {
 }
 
 function formatDateRange(from: string | null, to: string | null) {
-	if (from && to) {
-		return `${from} - ${to}`;
-	}
-
-	if (from) {
-		return from;
-	}
-
-	if (to) {
-		return to;
-	}
-
+	if (from && to) return `${from} - ${to}`;
+	if (from) return from;
+	if (to) return to;
 	return 'Няма';
 }
 
@@ -116,10 +114,7 @@ async function loadFontInfo(): Promise<TtfInfo> {
 
 			const table = (tag: string) => {
 				const value = tables.get(tag);
-				if (!value) {
-					throw new Error(`Missing TTF table: ${tag}`);
-				}
-
+				if (!value) throw new Error(`Missing TTF table: ${tag}`);
 				return value;
 			};
 
@@ -143,9 +138,7 @@ async function loadFontInfo(): Promise<TtfInfo> {
 			}
 
 			const cmapVersion = readUInt16(fontBytes, cmap.offset);
-			if (cmapVersion !== 0) {
-				throw new Error('Unsupported cmap version');
-			}
+			if (cmapVersion !== 0) throw new Error('Unsupported cmap version');
 
 			const cmapSubtableCount = readUInt16(fontBytes, cmap.offset + 2);
 			let selectedSubtableOffset = 0;
@@ -217,7 +210,6 @@ function buildFormat12Mapper(buffer: Buffer, offset: number) {
 				return group.startGlyph + (codePoint - group.start);
 			}
 		}
-
 		return 0;
 	};
 }
@@ -234,40 +226,30 @@ function buildFormat4Mapper(buffer: Buffer, offset: number) {
 			const endCode = readUInt16(buffer, endCodesOffset + index * 2);
 			const startCode = readUInt16(buffer, startCodesOffset + index * 2);
 
-			if (codePoint < startCode || codePoint > endCode) {
-				continue;
-			}
+			if (codePoint < startCode || codePoint > endCode) continue;
 
 			const idDelta = readUInt16(buffer, idDeltasOffset + index * 2);
 			const idRangeOffset = readUInt16(buffer, idRangeOffsetsOffset + index * 2);
 
-			if (idRangeOffset === 0) {
-				return (codePoint + idDelta) & 0xffff;
-			}
+			if (idRangeOffset === 0) return (codePoint + idDelta) & 0xffff;
 
 			const glyphIndexAddress =
 				idRangeOffsetsOffset + index * 2 + idRangeOffset + (codePoint - startCode) * 2;
 			const glyphIndex = readUInt16(buffer, glyphIndexAddress);
-			if (glyphIndex === 0) {
-				return 0;
-			}
-
+			if (glyphIndex === 0) return 0;
 			return (glyphIndex + idDelta) & 0xffff;
 		}
-
 		return 0;
 	};
 }
 
 function uniqueCharacters(values: string[]) {
 	const characters = new Set<number>();
-
 	for (const value of values) {
 		for (const char of Array.from(value)) {
 			characters.add(char.codePointAt(0) ?? 32);
 		}
 	}
-
 	return [...characters].sort((left, right) => left - right);
 }
 
@@ -302,18 +284,21 @@ function encodeTextAsCidHex(text: string, cidByCodePoint: Map<number, number>) {
 		const codePoint = char.codePointAt(0) ?? 32;
 		hex += toHex16(cidByCodePoint.get(codePoint) ?? 0);
 	}
-
 	return hex;
 }
 
-function textWidth(text: string, fontSize: number, widthByCid: Map<number, number>, cidByCodePoint: Map<number, number>) {
+function textWidth(
+	text: string,
+	fontSize: number,
+	widthByCid: Map<number, number>,
+	cidByCodePoint: Map<number, number>
+) {
 	let total = 0;
 	for (const char of Array.from(text)) {
 		const codePoint = char.codePointAt(0) ?? 32;
 		const cid = cidByCodePoint.get(codePoint) ?? 0;
 		total += widthByCid.get(cid) ?? 500;
 	}
-
 	return (total * fontSize) / 1000;
 }
 
@@ -325,9 +310,7 @@ function wrapText(
 	cidByCodePoint: Map<number, number>
 ) {
 	const normalized = text.replace(/\s+/g, ' ').trim();
-	if (!normalized) {
-		return [''];
-	}
+	if (!normalized) return [''];
 
 	const words = normalized.split(' ');
 	const lines: string[] = [];
@@ -339,36 +322,66 @@ function wrapText(
 			current = candidate;
 			continue;
 		}
-
 		lines.push(current);
 		current = word;
 	}
 
-	if (current) {
-		lines.push(current);
-	}
-
+	if (current) lines.push(current);
 	return lines;
 }
 
 function createPage(): Page {
-	return {
-		commands: ['0 G', '0 g'],
-		y: A4_HEIGHT - PAGE_MARGIN
-	};
+	return { commands: ['0 G', '0 g'], y: A4_HEIGHT - PAGE_MARGIN };
 }
 
-function addText(page: Page, text: string, x: number, y: number, fontSize: number, cidByCodePoint: Map<number, number>) {
+function addText(
+	page: Page,
+	text: string,
+	x: number,
+	y: number,
+	fontSize: number,
+	cidByCodePoint: Map<number, number>,
+	color?: readonly [number, number, number]
+) {
+	if (color) {
+		page.commands.push(`${color[0].toFixed(3)} ${color[1].toFixed(3)} ${color[2].toFixed(3)} rg`);
+	}
 	page.commands.push(
-		`BT /F1 ${fontSize} Tf 1 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)} Tm <${encodeTextAsCidHex(
-			text,
-			cidByCodePoint
-		)}> Tj ET`
+		`BT /F1 ${fontSize} Tf 1 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)} Tm <${encodeTextAsCidHex(text, cidByCodePoint)}> Tj ET`
 	);
+	if (color) {
+		page.commands.push('0 g');
+	}
 }
 
-function addLine(page: Page, x1: number, y1: number, x2: number, y2: number) {
+function addLine(
+	page: Page,
+	x1: number,
+	y1: number,
+	x2: number,
+	y2: number,
+	color?: readonly [number, number, number]
+) {
+	if (color) {
+		page.commands.push(`${color[0].toFixed(3)} ${color[1].toFixed(3)} ${color[2].toFixed(3)} RG`);
+	}
 	page.commands.push(`${x1.toFixed(2)} ${y1.toFixed(2)} m ${x2.toFixed(2)} ${y2.toFixed(2)} l S`);
+	if (color) {
+		page.commands.push('0 G');
+	}
+}
+
+function addRect(
+	page: Page,
+	x: number,
+	y: number,
+	w: number,
+	h: number,
+	color: readonly [number, number, number]
+) {
+	page.commands.push(`${color[0].toFixed(3)} ${color[1].toFixed(3)} ${color[2].toFixed(3)} rg`);
+	page.commands.push(`${x.toFixed(2)} ${y.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re f`);
+	page.commands.push('0 g');
 }
 
 function renderInvoicePages(
@@ -380,103 +393,189 @@ function renderInvoicePages(
 	let page = createPage();
 	pages.push(page);
 
-	const ensureSpace = (height: number) => {
+	const RIGHT_X = A4_WIDTH - PAGE_MARGIN;
+	const CONTENT_W = RIGHT_X - PAGE_MARGIN;
+
+	function ensureSpace(height: number) {
 		if (page.y - height < PAGE_MARGIN) {
 			page = createPage();
 			pages.push(page);
 		}
-	};
-
-	const addLabeledValue = (label: string, value: string, fontSize = 10) => {
-		ensureSpace(fontSize + 8);
-		addText(page, `${label}: ${value}`, PAGE_MARGIN, page.y, fontSize, cidByCodePoint);
-		page.y -= fontSize + 8;
-	};
-
-	addText(page, 'ФАКТУРА', PAGE_MARGIN, page.y, 20, cidByCodePoint);
-	page.y -= 28;
-	addLabeledValue('Номер', snapshot.invoiceNumber, 11);
-	addLabeledValue('Дата', snapshot.issueDate, 11);
-	addLabeledValue('Падеж', snapshot.dueDate ?? 'Няма', 11);
-	addLabeledValue('Период на услугата', formatDateRange(snapshot.servicePeriodFrom, snapshot.servicePeriodTo), 11);
-	addLabeledValue('Метод на плащане', formatPaymentMethod(snapshot.paymentMethod), 11);
-
-	page.y -= 6;
-	addText(page, 'ДОСТАВЧИК', PAGE_MARGIN, page.y, 12, cidByCodePoint);
-	page.y -= 18;
-	addLabeledValue('Фирма', snapshot.company.legalName);
-	addLabeledValue('ЕИК/Булстат', snapshot.company.registrationNumber ?? 'Няма');
-	addLabeledValue('ДДС номер', snapshot.company.vatNumber ?? 'Няма');
-	addLabeledValue('Адрес', snapshot.company.address ?? 'Няма');
-	addLabeledValue('МОЛ', snapshot.company.molName ?? 'Няма');
-
-	page.y -= 6;
-	addText(page, 'КЛИЕНТ', PAGE_MARGIN, page.y, 12, cidByCodePoint);
-	page.y -= 18;
-	addLabeledValue('Име', snapshot.client.legalName);
-	addLabeledValue('Регистрационен номер', snapshot.client.registrationNumber ?? 'Няма');
-	addLabeledValue('ДДС номер', snapshot.client.vatNumber ?? 'Няма');
-	addLabeledValue('Адрес', snapshot.client.address ?? 'Няма');
-
-	page.y -= 12;
-	ensureSpace(30);
-	addLine(page, PAGE_MARGIN, page.y, A4_WIDTH - PAGE_MARGIN, page.y);
-	page.y -= 16;
-	addText(page, 'Описание', PAGE_MARGIN, page.y, 11, cidByCodePoint);
-	addText(page, 'Проект', 345, page.y, 11, cidByCodePoint);
-	addText(page, 'Сума', 500, page.y, 11, cidByCodePoint);
-	page.y -= 10;
-	addLine(page, PAGE_MARGIN, page.y, A4_WIDTH - PAGE_MARGIN, page.y);
-	page.y -= 16;
-
-	for (const line of snapshot.lines) {
-		const wrappedDescription = wrapText(line.description, 260, 10, widthByCid, cidByCodePoint);
-		const wrappedProject = wrapText(line.projectName, 120, 10, widthByCid, cidByCodePoint);
-		const lineHeight = Math.max(wrappedDescription.length, wrappedProject.length) * 14 + 6;
-		ensureSpace(lineHeight + 8);
-
-		for (let index = 0; index < wrappedDescription.length; index += 1) {
-			addText(page, wrappedDescription[index] ?? '', PAGE_MARGIN, page.y, 10, cidByCodePoint);
-			if (index === 0) {
-				addText(page, formatMoney(line.amountCents, snapshot.currency), 470, page.y, 10, cidByCodePoint);
-			}
-
-			page.y -= 14;
-		}
-
-		for (let index = 0; index < wrappedProject.length; index += 1) {
-			addText(page, wrappedProject[index] ?? '', 345, page.y + 14 * (wrappedProject.length - index), 10, cidByCodePoint);
-		}
-
-		addLine(page, PAGE_MARGIN, page.y + 4, A4_WIDTH - PAGE_MARGIN, page.y + 4);
-		page.y -= 8;
 	}
 
-	page.y -= 10;
-	addText(page, 'Нетна сума', 360, page.y, 11, cidByCodePoint);
-	addText(page, formatMoney(snapshot.netTotalCents, snapshot.currency), 470, page.y, 11, cidByCodePoint);
+	function rtext(
+		str: string,
+		rightX: number,
+		y: number,
+		size: number,
+		color?: readonly [number, number, number]
+	) {
+		const w = textWidth(str, size, widthByCid, cidByCodePoint);
+		addText(page, str, rightX - w, y, size, cidByCodePoint, color);
+	}
+
+	// ── Header bar ───────────────────────────────────────────────────────────────
+	const HEADER_H = 66;
+	addRect(page, 0, A4_HEIGHT - HEADER_H, A4_WIDTH, HEADER_H, C_PURPLE);
+
+	addText(page, 'ФАКТУРА', PAGE_MARGIN, A4_HEIGHT - 26, 18, cidByCodePoint, C_WHITE);
+	addText(page, snapshot.invoiceNumber, PAGE_MARGIN, A4_HEIGHT - 45, 10, cidByCodePoint, C_LAVENDER);
+
+	rtext(snapshot.company.legalName, RIGHT_X, A4_HEIGHT - 28, 11, C_WHITE);
+	const regLabel = snapshot.company.vatNumber
+		? `ДДС: ${snapshot.company.vatNumber}`
+		: snapshot.company.registrationNumber
+			? `ЕИК: ${snapshot.company.registrationNumber}`
+			: '';
+	if (regLabel) {
+		rtext(regLabel, RIGHT_X, A4_HEIGHT - 44, 9, C_LAVENDER);
+	}
+
+	// ── Metadata row ─────────────────────────────────────────────────────────────
+	page.y = A4_HEIGHT - HEADER_H - 22;
+
+	const metaColW = CONTENT_W / 4;
+	const metaItems: [string, string][] = [
+		['ДАТА НА ИЗДАВАНЕ', snapshot.issueDate],
+		['ПАДЕЖ', snapshot.dueDate ?? 'Няма'],
+		['ПЕРИОД', formatDateRange(snapshot.servicePeriodFrom, snapshot.servicePeriodTo)],
+		['ПЛАЩАНЕ', formatPaymentMethod(snapshot.paymentMethod)]
+	];
+
+	for (let i = 0; i < metaItems.length; i++) {
+		const mx = PAGE_MARGIN + i * metaColW;
+		const [label, value] = metaItems[i];
+		addText(page, label, mx, page.y + 13, 7, cidByCodePoint, C_MUTED);
+		addText(page, value, mx, page.y, 9, cidByCodePoint);
+	}
 	page.y -= 16;
+
+	// ── Divider ──────────────────────────────────────────────────────────────────
+	addLine(page, PAGE_MARGIN, page.y, RIGHT_X, page.y, C_BORDER);
+	page.y -= 18;
+
+	// ── Party columns ────────────────────────────────────────────────────────────
+	const COL_L = PAGE_MARGIN;
+	const COL_MID = A4_WIDTH / 2 + 8;
+	const COL_W = A4_WIDTH / 2 - PAGE_MARGIN - 8;
+
+	addText(page, 'ДОСТАВЧИК', COL_L, page.y, 7, cidByCodePoint, C_MUTED);
+	addText(page, 'ПОЛУЧАТЕЛ', COL_MID, page.y, 7, cidByCodePoint, C_MUTED);
+	page.y -= 13;
+
+	const partyStartY = page.y;
+
+	function drawParty(party: InvoicePdfParty, x: number): number {
+		let y = partyStartY;
+
+		addText(page, party.legalName, x, y, 11, cidByCodePoint);
+		y -= 15;
+
+		function fieldRow(label: string, value: string | null | undefined): void {
+			if (!value) return;
+			const labelW = textWidth(label, 9, widthByCid, cidByCodePoint);
+			addText(page, label, x, y, 9, cidByCodePoint, C_MUTED);
+			const lines = wrapText(value, COL_W - labelW, 9, widthByCid, cidByCodePoint);
+			addText(page, lines[0] ?? '', x + labelW, y, 9, cidByCodePoint);
+			y -= 13;
+			for (let i = 1; i < lines.length; i++) {
+				addText(page, lines[i] ?? '', x, y, 9, cidByCodePoint);
+				y -= 13;
+			}
+		}
+
+		fieldRow('ЕИК: ', party.registrationNumber);
+		fieldRow('ДДС: ', party.vatNumber);
+		fieldRow('Адрес: ', party.address);
+		fieldRow('МОЛ: ', party.molName);
+		return y;
+	}
+
+	const leftBottom = drawParty(snapshot.company, COL_L);
+	const rightBottom = drawParty(snapshot.client, COL_MID);
+	page.y = Math.min(leftBottom, rightBottom) - 14;
+
+	// ── Divider ──────────────────────────────────────────────────────────────────
+	addLine(page, PAGE_MARGIN, page.y, RIGHT_X, page.y, C_BORDER);
+	page.y -= 4;
+
+	// ── Line items table ─────────────────────────────────────────────────────────
+	const DESC_COL = PAGE_MARGIN;
+	const PROJ_COL = 336;
+	const TABLE_HDR_H = 22;
+
+	ensureSpace(TABLE_HDR_H + 20);
+	addRect(page, PAGE_MARGIN, page.y - TABLE_HDR_H, CONTENT_W, TABLE_HDR_H, C_LIGHT_BG);
+	addText(page, 'ОПИСАНИЕ', DESC_COL + 4, page.y - 14, 8, cidByCodePoint, C_MUTED);
+	addText(page, 'ПРОЕКТ', PROJ_COL + 4, page.y - 14, 8, cidByCodePoint, C_MUTED);
+	rtext('СУМА', RIGHT_X, page.y - 14, 8, C_MUTED);
+	page.y -= TABLE_HDR_H;
+
+	for (const line of snapshot.lines) {
+		const descLines = wrapText(line.description, PROJ_COL - DESC_COL - 10, 10, widthByCid, cidByCodePoint);
+		const projLines = wrapText(line.projectName, RIGHT_X - PROJ_COL - 65, 10, widthByCid, cidByCodePoint);
+		const rowLineCount = Math.max(descLines.length, projLines.length);
+		const rowH = rowLineCount * 14 + 10;
+
+		ensureSpace(rowH + 4);
+
+		const rowTopY = page.y - 5;
+		for (let i = 0; i < descLines.length; i++) {
+			addText(page, descLines[i] ?? '', DESC_COL + 4, rowTopY - i * 14, 10, cidByCodePoint);
+		}
+		for (let i = 0; i < projLines.length; i++) {
+			addText(page, projLines[i] ?? '', PROJ_COL + 4, rowTopY - i * 14, 10, cidByCodePoint, C_MUTED);
+		}
+		rtext(formatMoney(line.amountCents, snapshot.currency), RIGHT_X, rowTopY, 10);
+
+		page.y -= rowH;
+		addLine(page, PAGE_MARGIN, page.y + 2, RIGHT_X, page.y + 2, C_BORDER);
+		page.y -= 2;
+	}
+
+	// ── Totals section ───────────────────────────────────────────────────────────
+	page.y -= 12;
+	const TOTALS_L = 360;
+
+	function totalsRow(label: string, value: string, size = 10) {
+		ensureSpace(size + 8);
+		addText(page, label, TOTALS_L, page.y, size, cidByCodePoint, C_MUTED);
+		rtext(value, RIGHT_X, page.y, size);
+		page.y -= size + 8;
+	}
+
+	totalsRow('Нетна сума:', formatMoney(snapshot.netTotalCents, snapshot.currency));
+	totalsRow(`ДДС (${(snapshot.vatRateBasisPoints / 100).toFixed(0)}%):`, formatMoney(snapshot.vatTotalCents, snapshot.currency));
+
+	ensureSpace(20);
+	addLine(page, TOTALS_L, page.y + 4, RIGHT_X, page.y + 4, C_BORDER);
+	page.y -= 4;
+
+	ensureSpace(26);
+	addText(page, 'ОБЩО:', TOTALS_L, page.y, 13, cidByCodePoint);
+	rtext(formatMoney(snapshot.grossTotalCents, snapshot.currency), RIGHT_X, page.y, 13);
+	page.y -= 30;
+
+	// ── Footer ───────────────────────────────────────────────────────────────────
+	ensureSpace(24);
+	addLine(page, PAGE_MARGIN, page.y + 10, RIGHT_X, page.y + 10, C_BORDER);
 	addText(
 		page,
-		`ДДС (${(snapshot.vatRateBasisPoints / 100).toFixed(2)}%)`,
-		360,
+		'Документът е генериран и запазен като неизменима версия при издаване.',
+		PAGE_MARGIN,
 		page.y,
-		11,
-		cidByCodePoint
+		8,
+		cidByCodePoint,
+		C_MUTED
 	);
-	addText(page, formatMoney(snapshot.vatTotalCents, snapshot.currency), 470, page.y, 11, cidByCodePoint);
-	page.y -= 16;
-	addText(page, 'Крайна сума', 360, page.y, 12, cidByCodePoint);
-	addText(page, formatMoney(snapshot.grossTotalCents, snapshot.currency), 470, page.y, 12, cidByCodePoint);
-	page.y -= 28;
-	addText(page, 'Документът е генериран и запазен като неизменима версия при издаване.', PAGE_MARGIN, page.y, 9, cidByCodePoint);
 
 	return pages;
 }
 
 function buildToUnicodeCMap(cidByCodePoint: Map<number, number>) {
 	const entries = [...cidByCodePoint.entries()]
-		.map(([codePoint, cid]) => `<${toHex16(cid)}> <${toHex16(codePoint)}>`).join('\n');
+		.map(([codePoint, cid]) => `<${toHex16(cid)}> <${toHex16(codePoint)}>`)
+		.join('\n');
 
 	return Buffer.from(
 		`/CIDInit /ProcSet findresource begin
@@ -597,45 +696,47 @@ export async function generateInvoicePdf(snapshot: InvoicePdfSnapshot) {
 	const fontInfo = await loadFontInfo();
 	const strings = [
 		'ФАКТУРА',
-		'Номер',
-		'Дата',
-		'Падеж',
-		'Период на услугата',
-		'Метод на плащане',
+		'ДАТА НА ИЗДАВАНЕ',
+		'ПАДЕЖ',
+		'ПЕРИОД',
+		'ПЛАЩАНЕ',
 		'ДОСТАВЧИК',
-		'КЛИЕНТ',
-		'Фирма',
-		'ЕИК/Булстат',
-		'ДДС номер',
-		'Адрес',
-		'МОЛ',
-		'Име',
-		'Регистрационен номер',
-		'Описание',
-		'Проект',
-		'Сума',
-		'Нетна сума',
-		'Крайна сума',
+		'ПОЛУЧАТЕЛ',
+		'ЕИК: ',
+		'ДДС: ',
+		'Адрес: ',
+		'МОЛ: ',
+		'ОПИСАНИЕ',
+		'ПРОЕКТ',
+		'СУМА',
+		'Нетна сума:',
+		'ОБЩО:',
 		'Документът е генериран и запазен като неизменима версия при издаване.',
+		'Няма',
 		formatPaymentMethod(snapshot.paymentMethod),
 		snapshot.invoiceNumber,
 		snapshot.issueDate,
 		snapshot.dueDate ?? 'Няма',
 		formatDateRange(snapshot.servicePeriodFrom, snapshot.servicePeriodTo),
 		snapshot.company.legalName,
-		snapshot.company.registrationNumber ?? 'Няма',
-		snapshot.company.vatNumber ?? 'Няма',
-		snapshot.company.address ?? 'Няма',
-		snapshot.company.molName ?? 'Няма',
+		snapshot.company.registrationNumber ?? '',
+		snapshot.company.vatNumber ?? '',
+		snapshot.company.address ?? '',
+		snapshot.company.molName ?? '',
 		snapshot.client.legalName,
-		snapshot.client.registrationNumber ?? 'Няма',
-		snapshot.client.vatNumber ?? 'Няма',
-		snapshot.client.address ?? 'Няма',
-		...snapshot.lines.flatMap((line) => [line.description, line.projectName, formatMoney(line.amountCents, snapshot.currency)]),
+		snapshot.client.registrationNumber ?? '',
+		snapshot.client.vatNumber ?? '',
+		snapshot.client.address ?? '',
+		snapshot.client.molName ?? '',
+		...snapshot.lines.flatMap((line) => [
+			line.description,
+			line.projectName,
+			formatMoney(line.amountCents, snapshot.currency)
+		]),
 		formatMoney(snapshot.netTotalCents, snapshot.currency),
 		formatMoney(snapshot.vatTotalCents, snapshot.currency),
 		formatMoney(snapshot.grossTotalCents, snapshot.currency),
-		`ДДС (${(snapshot.vatRateBasisPoints / 100).toFixed(2)}%)`
+		`ДДС (${(snapshot.vatRateBasisPoints / 100).toFixed(0)}%):`
 	];
 	const { cidByCodePoint, glyphByCid, widthByCid } = buildFontMaps(fontInfo, strings);
 	const pages = renderInvoicePages(snapshot, cidByCodePoint, widthByCid);

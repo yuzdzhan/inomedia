@@ -269,7 +269,7 @@
 	const allTasksForKpi = $derived(data.project.taskLists.flatMap((tl) => tl.tasks));
 	const totalLoggedMinutes = $derived(allTasksForKpi.flatMap((t) => t.timeLogs).reduce((s, l) => s + l.durationMinutes, 0));
 	const loggedHours = $derived(+(totalLoggedMinutes / 60).toFixed(1));
-	const budgetHours = data.project.budgetAmountCents ? Math.round(data.project.budgetAmountCents / 10000) : null;
+	const budgetHours = $derived(data.project.budgetAmountCents ? Math.round(data.project.budgetAmountCents / 10000) : null);
 	const burnPct = $derived(budgetHours && budgetHours > 0 ? Math.min(Math.round((loggedHours / budgetHours) * 100), 100) : null);
 	const uninvoicedMinutes = $derived(
 		allTasksForKpi.filter((t) => t.billingType === 'hourly')
@@ -632,8 +632,8 @@
 						</div>
 					{/if}
 				</div>
-				<div class="field">
-					<label class="label">Изпълнители</label>
+				<fieldset style="border:none; padding:0; margin:0;">
+					<legend class="label" style="margin-bottom:4px;">Изпълнители</legend>
 					<div style="display:flex; flex-wrap:wrap; gap:8px;">
 						{#each data.project.members as member}
 							<label style="display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer;">
@@ -643,7 +643,7 @@
 							</label>
 						{/each}
 					</div>
-				</div>
+				</fieldset>
 				<div class="field">
 					<label class="label" for="c-description">Описание</label>
 					<textarea class="input" id="c-description" name="description" rows="4" style="resize:vertical;">{createTaskFieldValue('description')}</textarea>
@@ -785,8 +785,8 @@
 								</div>
 							{/if}
 						</div>
-						<div class="field" style="margin:0;">
-							<label class="label">Изпълнители</label>
+						<fieldset style="border:none; padding:0; margin:0;">
+							<legend class="label" style="margin-bottom:4px;">Изпълнители</legend>
 							<div style="display:flex; flex-wrap:wrap; gap:8px;">
 								{#each data.project.members as member}
 									<label style="display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer;">
@@ -796,13 +796,13 @@
 									</label>
 								{/each}
 							</div>
-						</div>
+						</fieldset>
 						<div class="field" style="margin:0;">
 							<label class="label" for="e-desc-{task.id}">Описание</label>
 							<textarea class="input" id="e-desc-{task.id}" name="description" rows="4" style="resize:vertical;">{taskFieldValue('description', task.description)}</textarea>
 						</div>
 						<div class="field" style="margin:0;">
-							<label class="label">Прикачени файлове</label>
+							<label class="label" for="e-files-{task.id}">Прикачени файлове</label>
 							{#if task.attachments.length > 0}
 								<div style="display:flex; flex-direction:column; gap:4px; margin-bottom:8px;">
 									{#each task.attachments as att}
@@ -935,25 +935,25 @@
 										<input type="hidden" name="timeLogId" value={timeLog.id} />
 										<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
 											<div class="field" style="margin:0;">
-												<label class="label" style="font-size:11px;">Дата</label>
-												<input class="input" style="font-size:12px;" name="workDate" type="date" max={data.today} value={timeLogFieldValue('workDate', formatDateInputValue(timeLog.workDate))} />
+												<label class="label" style="font-size:11px;" for="edit-tl-date-{timeLog.id}">Дата</label>
+												<input class="input" style="font-size:12px;" id="edit-tl-date-{timeLog.id}" name="workDate" type="date" max={data.today} value={timeLogFieldValue('workDate', formatDateInputValue(timeLog.workDate))} />
 											</div>
 											<div class="field" style="margin:0;">
-												<label class="label" style="font-size:11px;">Минути</label>
-												<input class="input" style="font-size:12px;" name="durationMinutes" type="number" min="15" step="15" value={timeLogFieldValue('durationMinutes', String(timeLog.durationMinutes))} />
+												<label class="label" style="font-size:11px;" for="edit-tl-dur-{timeLog.id}">Минути</label>
+												<input class="input" style="font-size:12px;" id="edit-tl-dur-{timeLog.id}" name="durationMinutes" type="number" min="15" step="15" value={timeLogFieldValue('durationMinutes', String(timeLog.durationMinutes))} />
 											</div>
 											<div class="field" style="margin:0;">
-												<label class="label" style="font-size:11px;">Начало</label>
-												<input class="input" style="font-size:12px;" name="startTime" type="time" value={timeLogFieldValue('startTime', formatMinuteOfDay(timeLog.startMinuteOfDay))} />
+												<label class="label" style="font-size:11px;" for="edit-tl-start-{timeLog.id}">Начало</label>
+												<input class="input" style="font-size:12px;" id="edit-tl-start-{timeLog.id}" name="startTime" type="time" value={timeLogFieldValue('startTime', formatMinuteOfDay(timeLog.startMinuteOfDay))} />
 											</div>
 											<div class="field" style="margin:0;">
-												<label class="label" style="font-size:11px;">Край</label>
-												<input class="input" style="font-size:12px;" name="endTime" type="time" value={timeLogFieldValue('endTime', formatMinuteOfDay(timeLog.endMinuteOfDay))} />
+												<label class="label" style="font-size:11px;" for="edit-tl-end-{timeLog.id}">Край</label>
+												<input class="input" style="font-size:12px;" id="edit-tl-end-{timeLog.id}" name="endTime" type="time" value={timeLogFieldValue('endTime', formatMinuteOfDay(timeLog.endMinuteOfDay))} />
 											</div>
 										</div>
 										<div class="field" style="margin:0;">
-											<label class="label" style="font-size:11px;">Работа</label>
-											<textarea class="input" style="font-size:12px; resize:vertical;" name="description" rows="2">{timeLogFieldValue('description', timeLog.description)}</textarea>
+											<label class="label" style="font-size:11px;" for="edit-tl-desc-{timeLog.id}">Работа</label>
+											<textarea class="input" style="font-size:12px; resize:vertical;" id="edit-tl-desc-{timeLog.id}" name="description" rows="2">{timeLogFieldValue('description', timeLog.description)}</textarea>
 										</div>
 										<div class="row gap-2" style="justify-content:flex-end;">
 											<button type="button" class="btn btn-ghost btn-sm" style="height:24px;" onclick={closeTimeLogEditor}>Отказ</button>

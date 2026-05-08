@@ -1,4 +1,4 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { fail, redirect, error, isHttpError, isRedirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
@@ -40,42 +40,48 @@ function normalizeCategoryName(name: string) {
 }
 
 export const load: PageServerLoad = async ({ parent }) => {
-	const { user } = await parent();
-	if (user.role !== 'admin') {
-		redirect(302, '/dashboard');
-	}
+	try {
+		const { user } = await parent();
+		if (user.role !== 'admin') {
+			redirect(302, '/dashboard');
+		}
 
-	const company = await db.company.findFirst();
-	if (!company) {
-		redirect(302, '/bootstrap');
-	}
+		const company = await db.company.findFirst();
+		if (!company) {
+			redirect(302, '/bootstrap');
+		}
 
-	await ensureCompanyDefaults(db, company.id);
+		await ensureCompanyDefaults(db, company.id);
 
-	const [expenseCategories, internalClient] = await db.$transaction([
-		db.expenseCategory.findMany({
-			where: { companyId: company.id },
-			orderBy: [{ isActive: 'desc' }, { name: 'asc' }]
-		}),
-		db.client.findFirst({
-			where: { companyId: company.id, isInternal: true },
-			select: {
-				id: true,
-				legalName: true,
-				isProtectedSystem: true,
-				status: true,
-				_count: {
-					select: { projects: true }
+		const [expenseCategories, internalClient] = await db.$transaction([
+			db.expenseCategory.findMany({
+				where: { companyId: company.id },
+				orderBy: [{ isActive: 'desc' }, { name: 'asc' }]
+			}),
+			db.client.findFirst({
+				where: { companyId: company.id, isInternal: true },
+				select: {
+					id: true,
+					legalName: true,
+					isProtectedSystem: true,
+					status: true,
+					_count: {
+						select: { projects: true }
+					}
 				}
-			}
-		})
-	]);
+			})
+		]);
 
-	return {
-		company,
-		expenseCategories,
-		internalClient
-	};
+		return {
+			company,
+			expenseCategories,
+			internalClient
+		};
+	} catch (e) {
+		if (isRedirect(e) || isHttpError(e)) throw e;
+		console.error(e);
+		throw error(500, 'Грешка при зареждане на данните.');
+	}
 };
 
 export const actions: Actions = {
