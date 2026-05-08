@@ -16,7 +16,10 @@ services:
       - proxy
 
   app:
-    image: node:22-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    image: ozzydev-inomedia-app:local
     container_name: ozzydev-inomedia-app
     restart: unless-stopped
     working_dir: /app

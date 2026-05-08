@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
+import puppeteer from 'puppeteer';
+import type { Browser } from 'puppeteer';
 
 type InvoicePdfParty = {
 	legalName: string;
@@ -45,801 +45,333 @@ export type InvoicePdfSnapshot = {
 	bankBic?: string | null;
 };
 
-type TtfInfo = {
-	fontBytes: Buffer;
-	unitsPerEm: number;
-	ascent: number;
-	descent: number;
-	xMin: number;
-	yMin: number;
-	xMax: number;
-	yMax: number;
-	glyphIndexForCodePoint: (codePoint: number) => number;
-	advanceWidthForGlyph: (glyphId: number) => number;
-};
+let browserPromise: Promise<Browser> | null = null;
 
-type Page = {
-	commands: string[];
-	y: number;
-};
-
-const A4_WIDTH = 595;
-const A4_HEIGHT = 842;
-const PAGE_MARGIN = 48;
-const FONT_PATH = path.resolve(process.cwd(), 'static/fonts/OpenSans-Regular.ttf');
-
-// Colors: RGB 0–1 — from template palette
-const C_PRIMARY: readonly [number, number, number]      = [0.310, 0.216, 0.541]; // #4f378a
-const C_CHARCOAL: readonly [number, number, number]     = [0.200, 0.255, 0.333]; // #334155
-const C_MUTED: readonly [number, number, number]        = [0.286, 0.271, 0.318]; // #494551
-const C_BLACK: readonly [number, number, number]        = [0.114, 0.106, 0.125]; // #1d1b20
-const C_BORDER: readonly [number, number, number]       = [0.898, 0.910, 0.922]; // #E5E7EB
-const C_TBL_HDR: readonly [number, number, number]      = [0.976, 0.980, 0.988]; // #F9FAFB
-const C_ALT_ROW: readonly [number, number, number]      = [0.973, 0.949, 0.980]; // #f8f2fa
-const C_SURFACE_HIGH: readonly [number, number, number] = [0.925, 0.902, 0.933]; // #ece6ee
-const C_BADGE_BG: readonly [number, number, number]     = [0.788, 0.655, 0.302]; // #c9a74d
-const C_BADGE_FG: readonly [number, number, number]     = [0.314, 0.239, 0.000]; // #503d00
-const C_ERROR: readonly [number, number, number]        = [0.729, 0.102, 0.102]; // #ba1a1a
-const C_SUCCESS: readonly [number, number, number]      = [0.133, 0.545, 0.133];
-
-let fontInfoPromise: Promise<TtfInfo> | null = null;
-
-function readUInt16(buffer: Buffer, offset: number) {
-	return buffer.readUInt16BE(offset);
-}
-
-function readInt16(buffer: Buffer, offset: number) {
-	return buffer.readInt16BE(offset);
-}
-
-function readUInt32(buffer: Buffer, offset: number) {
-	return buffer.readUInt32BE(offset);
-}
-
-function formatMoney(valueCents: number, currency: string) {
-	const symbol = currency === 'EUR' ? '€' : currency === 'USD' ? '$' : currency === 'BGN' ? 'лв.' : currency;
-	return `${(valueCents / 100).toFixed(2)} ${symbol}`;
-}
-
-function formatPaymentMethod(value: string) {
-	return value === 'cash' ? 'В брой' : 'Банков превод';
-}
-
-function formatHours(h: number): string {
-	const totalMin = Math.round(h * 60);
-	const hrs = Math.floor(totalMin / 60);
-	const min = totalMin % 60;
-	if (min === 0) return `${hrs}h`;
-	return `${hrs}h ${min}min`;
-}
-
-async function loadFontInfo(): Promise<TtfInfo> {
-	if (!fontInfoPromise) {
-		fontInfoPromise = (async () => {
-			const fontBytes = await readFile(FONT_PATH);
-			const numTables = readUInt16(fontBytes, 4);
-			const tables = new Map<string, { offset: number; length: number }>();
-
-			for (let index = 0; index < numTables; index += 1) {
-				const entryOffset = 12 + index * 16;
-				const tag = fontBytes.toString('ascii', entryOffset, entryOffset + 4);
-				tables.set(tag, {
-					offset: readUInt32(fontBytes, entryOffset + 8),
-					length: readUInt32(fontBytes, entryOffset + 12)
-				});
-			}
-
-			const table = (tag: string) => {
-				const value = tables.get(tag);
-				if (!value) throw new Error(`Missing TTF table: ${tag}`);
-				return value;
-			};
-
-			const head = table('head');
-			const hhea = table('hhea');
-			const hmtx = table('hmtx');
-			const cmap = table('cmap');
-
-			const unitsPerEm = readUInt16(fontBytes, head.offset + 18);
-			const xMin = readInt16(fontBytes, head.offset + 36);
-			const yMin = readInt16(fontBytes, head.offset + 38);
-			const xMax = readInt16(fontBytes, head.offset + 40);
-			const yMax = readInt16(fontBytes, head.offset + 42);
-			const ascent = readInt16(fontBytes, hhea.offset + 4);
-			const descent = readInt16(fontBytes, hhea.offset + 6);
-			const numberOfHMetrics = readUInt16(fontBytes, hhea.offset + 34);
-			const advanceWidths: number[] = [];
-
-			for (let index = 0; index < numberOfHMetrics; index += 1) {
-				advanceWidths.push(readUInt16(fontBytes, hmtx.offset + index * 4));
-			}
-
-			const cmapVersion = readUInt16(fontBytes, cmap.offset);
-			if (cmapVersion !== 0) throw new Error('Unsupported cmap version');
-
-			const cmapSubtableCount = readUInt16(fontBytes, cmap.offset + 2);
-			let selectedSubtableOffset = 0;
-			let selectedFormat = 0;
-
-			for (let index = 0; index < cmapSubtableCount; index += 1) {
-				const recordOffset = cmap.offset + 4 + index * 8;
-				const platformId = readUInt16(fontBytes, recordOffset);
-				const encodingId = readUInt16(fontBytes, recordOffset + 2);
-				const subtableOffset = readUInt32(fontBytes, recordOffset + 4);
-				const format = readUInt16(fontBytes, cmap.offset + subtableOffset);
-
-				if (platformId === 3 && encodingId === 10 && format === 12) {
-					selectedSubtableOffset = cmap.offset + subtableOffset;
-					selectedFormat = format;
-					break;
-				}
-
-				if (!selectedSubtableOffset && platformId === 3 && encodingId === 1 && format === 4) {
-					selectedSubtableOffset = cmap.offset + subtableOffset;
-					selectedFormat = format;
-				}
-			}
-
-			if (!selectedSubtableOffset || !selectedFormat) {
-				throw new Error('No supported cmap subtable found');
-			}
-
-			const glyphIndexForCodePoint =
-				selectedFormat === 12
-					? buildFormat12Mapper(fontBytes, selectedSubtableOffset)
-					: buildFormat4Mapper(fontBytes, selectedSubtableOffset);
-
-			return {
-				fontBytes,
-				unitsPerEm,
-				ascent,
-				descent,
-				xMin,
-				yMin,
-				xMax,
-				yMax,
-				glyphIndexForCodePoint,
-				advanceWidthForGlyph: (glyphId: number) =>
-					advanceWidths[Math.min(glyphId, advanceWidths.length - 1)] ?? advanceWidths.at(-1) ?? 1000
-			};
-		})().catch((err) => {
-			fontInfoPromise = null;
+function getBrowser(): Promise<Browser> {
+	if (!browserPromise) {
+		browserPromise = puppeteer.launch({
+			headless: true,
+			executablePath: '/usr/bin/chromium-browser',
+			args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+		}).catch(err => {
+			browserPromise = null;
 			throw err;
 		});
 	}
-
-	return fontInfoPromise;
+	return browserPromise;
 }
 
-function buildFormat12Mapper(buffer: Buffer, offset: number) {
-	const groupCount = readUInt32(buffer, offset + 12);
-	const groups: Array<{ start: number; end: number; startGlyph: number }> = [];
+function h(s: string | null | undefined): string {
+	if (!s) return '';
+	return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
-	for (let index = 0; index < groupCount; index += 1) {
-		const groupOffset = offset + 16 + index * 12;
-		groups.push({
-			start: readUInt32(buffer, groupOffset),
-			end: readUInt32(buffer, groupOffset + 4),
-			startGlyph: readUInt32(buffer, groupOffset + 8)
+function hNl(s: string | null | undefined): string {
+	return h(s).replace(/\n/g, '<br>');
+}
+
+function fmtMoney(cents: number): string {
+	return (cents / 100).toLocaleString('bg-BG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtHours(hours: number): string {
+	const totalMinutes = Math.round(hours * 60);
+	const hh = Math.floor(totalMinutes / 60);
+	const mm = totalMinutes % 60;
+	return mm === 0 ? `${hh}h` : `${hh}h ${mm}min`;
+}
+
+function partyFields(party: InvoicePdfParty): string {
+	let rows = `<span class="inv-fk">Фирма:</span><span class="inv-fv inv-fv-bold">${h(party.legalName)}</span>`;
+	if (party.registrationNumber)
+		rows += `<span class="inv-fk">ЕИК/БУЛСТАТ:</span><span class="inv-fv inv-fv-num">${h(party.registrationNumber)}</span>`;
+	if (party.vatNumber)
+		rows += `<span class="inv-fk">ДДС №:</span><span class="inv-fv inv-fv-num">${h(party.vatNumber)}</span>`;
+	if (party.address)
+		rows += `<span class="inv-fk">Адрес:</span><span class="inv-fv">${hNl(party.address)}</span>`;
+	if (party.molName)
+		rows += `<span class="inv-fk">МОЛ:</span><span class="inv-fv">${h(party.molName)}</span>`;
+	return rows;
+}
+
+function buildInvoiceHtml(snap: InvoicePdfSnapshot): string {
+	const { company, client, projectGroups, vatRateBasisPoints, currency } = snap;
+	const vatPct = (vatRateBasisPoints / 100).toFixed(0);
+	const paidCents = snap.paidTotalCents ?? 0;
+	const remainingCents = Math.max(0, snap.grossTotalCents - paidCents);
+
+	const companyDetails = [
+		company.email ? `<p class="inv-company-detail">${h(company.email)}</p>` : '',
+		company.phone ? `<p class="inv-company-detail">${h(company.phone)}</p>` : '',
+		company.website ? `<p class="inv-company-detail">${h(company.website)}</p>` : ''
+	].join('');
+
+	let tableRows = '';
+	for (let gi = 0; gi < projectGroups.length; gi++) {
+		const group = projectGroups[gi];
+		const bgClass = gi % 2 === 0 ? 'inv-tr-surface' : 'inv-tr-alt';
+		tableRows += `
+		<tr class="inv-tr ${bgClass}">
+			<td class="inv-td inv-td-num">${gi + 1}</td>
+			<td class="inv-td inv-td-desc inv-td-project">${h(group.projectName)}</td>
+			<td class="inv-td inv-td-vat">${vatPct}%</td>
+			<td class="inv-td inv-td-total">${fmtMoney(group.netAmountCents)}</td>
+		</tr>`;
+		for (const task of group.tasks) {
+			const prefix = task.hours != null ? `${fmtHours(task.hours)} — ` : '';
+			tableRows += `
+		<tr class="inv-tr">
+			<td class="inv-td inv-td-num"></td>
+			<td class="inv-td inv-td-desc inv-td-task-desc">${h(prefix + task.description)}</td>
+			<td class="inv-td"></td>
+			<td class="inv-td inv-td-total inv-td-task-total">${fmtMoney(task.amountCents)}</td>
+		</tr>`;
+		}
+	}
+
+	let bankFields = '';
+	if (snap.bankName)
+		bankFields += `<div class="inv-bank-field"><span class="inv-bk">Банка</span><span class="inv-bv">${h(snap.bankName)}</span></div>`;
+	if (snap.bankIban)
+		bankFields += `<div class="inv-bank-field"><span class="inv-bk">IBAN</span><span class="inv-bv inv-bv-iban">${h(snap.bankIban)}</span></div>`;
+	if (snap.bankBic)
+		bankFields += `<div class="inv-bank-field"><span class="inv-bk">BIC/SWIFT</span><span class="inv-bv">${h(snap.bankBic)}</span></div>`;
+	bankFields += `<div class="inv-bank-field"><span class="inv-bk">Получател</span><span class="inv-bv">${h(company.legalName)}</span></div>`;
+	bankFields += `<div class="inv-bank-field inv-bank-wide"><span class="inv-bk">Основание за плащане</span><span class="inv-bv inv-bv-ref">Плащане по фактура №${h(snap.invoiceNumber)}</span></div>`;
+
+	const remainingClass = remainingCents === 0 ? 'inv-sum-due inv-sum-due-zero' : 'inv-sum-due';
+
+	return `<!DOCTYPE html>
+<html lang="bg">
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&family=Montserrat:wght@600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; padding: 0; font-family: 'Open Sans', sans-serif; color: #1d1b20; background: #fff; }
+
+.inv-header {
+	display: flex; justify-content: space-between; align-items: flex-start;
+	margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px solid #E5E7EB;
+}
+.inv-header-left { width: 50%; }
+.inv-company-name {
+	font-family: 'Montserrat', sans-serif; font-size: 18px; font-weight: 600;
+	letter-spacing: -0.01em; line-height: 24px; color: #4f378a; margin: 0 0 4px 0;
+}
+.inv-company-detail { font-size: 12px; line-height: 18px; color: #494551; margin: 0; }
+.inv-header-right { width: 50%; text-align: right; }
+.inv-doc-title {
+	font-family: 'Montserrat', sans-serif; font-size: 24px; font-weight: 700;
+	letter-spacing: -0.02em; line-height: 32px; color: #334155; margin: 0 0 4px 0;
+}
+.inv-doc-subtitle {
+	font-family: 'Montserrat', sans-serif; font-size: 18px; font-weight: 700;
+	letter-spacing: -0.01em; color: #494551; text-transform: uppercase; margin: 0 0 8px 0;
+}
+.inv-meta-grid {
+	display: grid; grid-template-columns: auto auto; gap: 4px 8px;
+	justify-content: end; margin-bottom: 4px;
+}
+.inv-mk { font-size: 11px; font-weight: 700; letter-spacing: 0.02em; color: #494551; text-align: right; }
+.inv-mv { font-size: 13px; font-weight: 600; color: #1d1b20; text-align: right; font-variant-numeric: tabular-nums; }
+
+.inv-legal { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; }
+.inv-section-title {
+	font-family: 'Montserrat', sans-serif; font-size: 14px; font-weight: 600; line-height: 20px;
+	color: #334155; border-bottom: 1px solid #E5E7EB; padding-bottom: 4px; margin: 0 0 8px 0;
+}
+.inv-fields { display: grid; grid-template-columns: 100px 1fr; gap: 4px 0; font-size: 12px; line-height: 18px; }
+.inv-fk { font-size: 11px; font-weight: 700; letter-spacing: 0.02em; color: #494551; padding-right: 8px; }
+.inv-fv { color: #1d1b20; }
+.inv-fv-num { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.inv-fv-bold { font-weight: 600; }
+
+.inv-table-wrap { margin-bottom: 32px; }
+.inv-table { width: 100%; border-collapse: collapse; }
+.inv-th {
+	background: #F9FAFB; font-size: 11px; font-weight: 700; letter-spacing: 0.02em;
+	color: #494551; padding: 8px; text-align: left;
+	border-top: 1px solid #E5E7EB; border-bottom: 1px solid #E5E7EB;
+}
+.inv-th-num { width: 36px; text-align: center; }
+.inv-th-vat { width: 64px; text-align: right; }
+.inv-th-total { width: 110px; text-align: right; }
+.inv-tr { border-bottom: 1px solid #ece6ee; }
+.inv-tr-alt { background: #f8f2fa; }
+.inv-tr-surface { background: #ece6ee; }
+.inv-td { font-size: 12px; line-height: 18px; color: #1d1b20; padding: 8px; vertical-align: top; }
+.inv-td-num { text-align: center; }
+.inv-td-vat { text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.inv-td-total { text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.inv-td-project { font-weight: 600; }
+.inv-td-task-desc { font-size: 11px; color: #494551; padding-top: 4px; padding-bottom: 4px; padding-left: 20px; }
+.inv-td-task-total { font-size: 11px; font-weight: 400; color: #494551; padding-top: 4px; padding-bottom: 4px; }
+
+.inv-summary-wrap { display: flex; justify-content: flex-end; margin-bottom: 32px; }
+.inv-summary { width: 300px; }
+.inv-sum-row { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 0; }
+.inv-sum-sep { border-bottom: 1px solid #E5E7EB; }
+.inv-sum-muted { color: #494551; }
+.inv-sum-label { font-size: 12px; color: #494551; }
+.inv-sum-val { font-size: 13px; font-weight: 600; color: #1d1b20; font-variant-numeric: tabular-nums; }
+.inv-sum-grand { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 0; margin-top: 4px; }
+.inv-sum-grand-label {
+	font-family: 'Montserrat', sans-serif; font-size: 18px; font-weight: 600;
+	letter-spacing: -0.01em; color: #334155;
+}
+.inv-sum-grand-val {
+	font-family: 'Montserrat', sans-serif; font-size: 18px; font-weight: 600;
+	letter-spacing: -0.01em; color: #334155; font-variant-numeric: tabular-nums;
+}
+.inv-sum-sm-label { font-size: 10px; color: #494551; }
+.inv-sum-sm-val { font-size: 13px; font-weight: 600; color: #1d1b20; font-variant-numeric: tabular-nums; }
+.inv-sum-due {
+	display: flex; justify-content: space-between; align-items: baseline;
+	padding: 4px 8px; background: #ece6ee; border-radius: 2px; margin-top: 4px;
+	font-family: 'Montserrat', sans-serif; font-size: 14px; font-weight: 600; color: #ba1a1a;
+}
+.inv-sum-due.inv-sum-due-zero { color: #15803d; background: #dcfce7; }
+
+.inv-footer { padding-top: 24px; border-top: 1px solid #E5E7EB; }
+.inv-bank {
+	background: #f8f2fa; border: 2px dashed #cbc4d2; border-radius: 2px;
+	padding: 16px; margin-bottom: 24px;
+}
+.inv-bank-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.inv-bank-title {
+	font-family: 'Montserrat', sans-serif; font-size: 14px; font-weight: 600;
+	color: #334155; display: flex; align-items: center; gap: 6px; margin: 0;
+}
+.inv-bank-icon { width: 18px; height: 18px; color: #334155; flex-shrink: 0; }
+.inv-bank-subtitle { font-size: 10px; font-weight: 700; letter-spacing: 0.02em; color: #494551; }
+.inv-bank-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px 32px; font-size: 12px; }
+.inv-bank-field { display: flex; flex-direction: column; gap: 2px; }
+.inv-bank-wide { grid-column: span 2; }
+.inv-bk { font-size: 11px; font-weight: 700; letter-spacing: 0.02em; color: #494551; text-transform: uppercase; }
+.inv-bv { font-weight: 600; color: #1d1b20; }
+.inv-bv-iban { font-size: 13px; font-weight: 700; color: #4f378a; font-variant-numeric: tabular-nums; }
+.inv-bv-ref { background: #f2ecf4; padding: 2px 8px; border-radius: 2px; font-weight: 600; }
+.inv-bank-footer {
+	margin-top: 12px; padding-top: 8px; border-top: 1px dotted #cbc4d2;
+	display: flex; justify-content: space-between; align-items: center;
+	font-size: 10px; color: #494551; font-style: italic;
+}
+.inv-bank-footer p { margin: 0; }
+.inv-page-num { text-align: right; font-size: 10px; color: #494551; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<header class="inv-header">
+	<div class="inv-header-left">
+		<h1 class="inv-company-name">${h(company.legalName)}</h1>
+		${companyDetails}
+	</div>
+	<div class="inv-header-right">
+		<h2 class="inv-doc-title">ФАКТУРА</h2>
+		<p class="inv-doc-subtitle">(ОРИГИНАЛ)</p>
+		<div class="inv-meta-grid">
+			<span class="inv-mk">Номер:</span>
+			<span class="inv-mv">${h(snap.invoiceNumber)}</span>
+			<span class="inv-mk">Дата:</span>
+			<span class="inv-mv">${h(snap.issueDate)}</span>
+			<span class="inv-mk">Падеж:</span>
+			<span class="inv-mv">${snap.dueDate ? h(snap.dueDate) : '—'}</span>
+		</div>
+	</div>
+</header>
+
+<div class="inv-legal">
+	<div>
+		<h3 class="inv-section-title">ДОСТАВЧИК</h3>
+		<div class="inv-fields">${partyFields(company)}</div>
+	</div>
+	<div>
+		<h3 class="inv-section-title">КЛИЕНТ</h3>
+		<div class="inv-fields">${partyFields(client)}</div>
+	</div>
+</div>
+
+<div class="inv-table-wrap">
+	<table class="inv-table">
+		<thead>
+			<tr>
+				<th class="inv-th inv-th-num">№</th>
+				<th class="inv-th">Описание</th>
+				<th class="inv-th inv-th-vat">VAT %</th>
+				<th class="inv-th inv-th-total">Сума (${h(currency)})</th>
+			</tr>
+		</thead>
+		<tbody>${tableRows}</tbody>
+	</table>
+</div>
+
+<div class="inv-summary-wrap">
+	<div class="inv-summary">
+		<div class="inv-sum-row inv-sum-sep">
+			<span class="inv-sum-label">Сума без ДДС:</span>
+			<span class="inv-sum-val">${fmtMoney(snap.netTotalCents)} ${h(currency)}</span>
+		</div>
+		<div class="inv-sum-row inv-sum-sep">
+			<span class="inv-sum-label">ДДС ${vatPct}%:</span>
+			<span class="inv-sum-val">${fmtMoney(snap.vatTotalCents)} ${h(currency)}</span>
+		</div>
+		<div class="inv-sum-grand">
+			<span class="inv-sum-grand-label">Общо с ДДС:</span>
+			<span class="inv-sum-grand-val">${fmtMoney(snap.grossTotalCents)} ${h(currency)}</span>
+		</div>
+		<div class="inv-sum-row inv-sum-muted">
+			<span class="inv-sum-sm-label">Платено:</span>
+			<span class="inv-sum-sm-val">${fmtMoney(paidCents)} ${h(currency)}</span>
+		</div>
+		<div class="${remainingClass}">
+			<span>Остатък за плащане:</span>
+			<span>${fmtMoney(remainingCents)} ${h(currency)}</span>
+		</div>
+	</div>
+</div>
+
+<footer class="inv-footer">
+	<div class="inv-bank">
+		<div class="inv-bank-head">
+			<h3 class="inv-bank-title">
+				<svg class="inv-bank-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+					<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17.93V18c0-.55-.45-1-1-1s-1 .45-1 1v1.93C7.06 19.44 4.56 16.94 4.07 14H6c.55 0 1-.45 1-1s-.45-1-1-1H4.07C4.56 8.06 7.06 5.56 10 5.07V7c0 .55.45 1 1 1s1-.45 1-1V5.07C16.94 5.56 19.44 8.06 19.93 11H18c-.55 0-1 .45-1 1s.45 1 1 1h1.93c-.49 2.94-2.99 5.44-5.93 5.93z"/>
+				</svg>
+				ДАННИ ЗА ПЛАЩАНЕ
+			</h3>
+			<span class="inv-bank-subtitle">Платежно нареждане</span>
+		</div>
+		<div class="inv-bank-grid">${bankFields}</div>
+		<div class="inv-bank-footer">
+			<p>Please use the exact reference provided to ensure automatic processing.</p>
+			${snap.dueDate ? `<p>Deadline: ${h(snap.dueDate)}</p>` : ''}
+		</div>
+	</div>
+	<div class="inv-page-num">Page 1 of 1</div>
+</footer>
+
+</body>
+</html>`;
+}
+
+export async function generateInvoicePdf(snapshot: InvoicePdfSnapshot): Promise<Uint8Array<ArrayBuffer>> {
+	const browser = await getBrowser();
+	const page = await browser.newPage();
+	try {
+		const html = buildInvoiceHtml(snapshot);
+		await page.setContent(html, { waitUntil: 'networkidle0' });
+		const pdfBuffer = await page.pdf({
+			format: 'A4',
+			printBackground: true,
+			margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' }
 		});
+		// Copy into Uint8Array<ArrayBuffer> to satisfy BodyInit / Prisma bytes type
+		const result = new Uint8Array(new ArrayBuffer(pdfBuffer.length));
+		result.set(pdfBuffer);
+		return result;
+	} finally {
+		await page.close();
 	}
-
-	return (codePoint: number) => {
-		for (const group of groups) {
-			if (codePoint >= group.start && codePoint <= group.end) {
-				return group.startGlyph + (codePoint - group.start);
-			}
-		}
-		return 0;
-	};
-}
-
-function buildFormat4Mapper(buffer: Buffer, offset: number) {
-	const segCount = readUInt16(buffer, offset + 6) / 2;
-	const endCodesOffset = offset + 14;
-	const startCodesOffset = endCodesOffset + segCount * 2 + 2;
-	const idDeltasOffset = startCodesOffset + segCount * 2;
-	const idRangeOffsetsOffset = idDeltasOffset + segCount * 2;
-
-	return (codePoint: number) => {
-		for (let index = 0; index < segCount; index += 1) {
-			const endCode = readUInt16(buffer, endCodesOffset + index * 2);
-			const startCode = readUInt16(buffer, startCodesOffset + index * 2);
-
-			if (codePoint < startCode || codePoint > endCode) continue;
-
-			const idDelta = readUInt16(buffer, idDeltasOffset + index * 2);
-			const idRangeOffset = readUInt16(buffer, idRangeOffsetsOffset + index * 2);
-
-			if (idRangeOffset === 0) return (codePoint + idDelta) & 0xffff;
-
-			const glyphIndexAddress =
-				idRangeOffsetsOffset + index * 2 + idRangeOffset + (codePoint - startCode) * 2;
-			const glyphIndex = readUInt16(buffer, glyphIndexAddress);
-			if (glyphIndex === 0) return 0;
-			return (glyphIndex + idDelta) & 0xffff;
-		}
-		return 0;
-	};
-}
-
-function uniqueCharacters(values: string[]) {
-	const characters = new Set<number>();
-	for (const value of values) {
-		for (const char of Array.from(value)) {
-			characters.add(char.codePointAt(0) ?? 32);
-		}
-	}
-	return [...characters].sort((left, right) => left - right);
-}
-
-function toHex16(value: number) {
-	return value.toString(16).padStart(4, '0').toUpperCase();
-}
-
-function buildFontMaps(fontInfo: TtfInfo, strings: string[]) {
-	const codePoints = uniqueCharacters(strings);
-	const cidByCodePoint = new Map<number, number>();
-	const glyphByCid = new Map<number, number>();
-	const widthByCid = new Map<number, number>();
-
-	let nextCid = 1;
-	for (const codePoint of codePoints) {
-		const cid = nextCid++;
-		const glyphId = fontInfo.glyphIndexForCodePoint(codePoint);
-		const width = Math.round(
-			(fontInfo.advanceWidthForGlyph(glyphId) * 1000) / Math.max(fontInfo.unitsPerEm, 1)
-		);
-		cidByCodePoint.set(codePoint, cid);
-		glyphByCid.set(cid, glyphId);
-		widthByCid.set(cid, width);
-	}
-
-	return { cidByCodePoint, glyphByCid, widthByCid };
-}
-
-function encodeTextAsCidHex(text: string, cidByCodePoint: Map<number, number>) {
-	let hex = '';
-	for (const char of Array.from(text)) {
-		const codePoint = char.codePointAt(0) ?? 32;
-		hex += toHex16(cidByCodePoint.get(codePoint) ?? 0);
-	}
-	return hex;
-}
-
-function textWidth(
-	text: string,
-	fontSize: number,
-	widthByCid: Map<number, number>,
-	cidByCodePoint: Map<number, number>
-) {
-	let total = 0;
-	for (const char of Array.from(text)) {
-		const codePoint = char.codePointAt(0) ?? 32;
-		const cid = cidByCodePoint.get(codePoint) ?? 0;
-		total += widthByCid.get(cid) ?? 500;
-	}
-	return (total * fontSize) / 1000;
-}
-
-function wrapText(
-	text: string,
-	maxWidth: number,
-	fontSize: number,
-	widthByCid: Map<number, number>,
-	cidByCodePoint: Map<number, number>
-) {
-	const normalized = text.replace(/\s+/g, ' ').trim();
-	if (!normalized) return [''];
-
-	const words = normalized.split(' ');
-	const lines: string[] = [];
-	let current = '';
-
-	for (const word of words) {
-		const candidate = current ? `${current} ${word}` : word;
-		if (textWidth(candidate, fontSize, widthByCid, cidByCodePoint) <= maxWidth || !current) {
-			current = candidate;
-			continue;
-		}
-		lines.push(current);
-		current = word;
-	}
-
-	if (current) lines.push(current);
-	return lines;
-}
-
-function createPage(): Page {
-	return { commands: ['0 G', '0 g'], y: A4_HEIGHT - PAGE_MARGIN };
-}
-
-function addText(
-	page: Page,
-	text: string,
-	x: number,
-	y: number,
-	fontSize: number,
-	cidByCodePoint: Map<number, number>,
-	color?: readonly [number, number, number]
-) {
-	if (color) {
-		page.commands.push(`${color[0].toFixed(3)} ${color[1].toFixed(3)} ${color[2].toFixed(3)} rg`);
-	}
-	page.commands.push(
-		`BT /F1 ${fontSize} Tf 1 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)} Tm <${encodeTextAsCidHex(text, cidByCodePoint)}> Tj ET`
-	);
-	if (color) {
-		page.commands.push('0 g');
-	}
-}
-
-function addLine(
-	page: Page,
-	x1: number,
-	y1: number,
-	x2: number,
-	y2: number,
-	color?: readonly [number, number, number]
-) {
-	if (color) {
-		page.commands.push(`${color[0].toFixed(3)} ${color[1].toFixed(3)} ${color[2].toFixed(3)} RG`);
-	}
-	page.commands.push(`${x1.toFixed(2)} ${y1.toFixed(2)} m ${x2.toFixed(2)} ${y2.toFixed(2)} l S`);
-	if (color) {
-		page.commands.push('0 G');
-	}
-}
-
-function addRect(
-	page: Page,
-	x: number,
-	y: number,
-	w: number,
-	h: number,
-	color: readonly [number, number, number]
-) {
-	page.commands.push(`${color[0].toFixed(3)} ${color[1].toFixed(3)} ${color[2].toFixed(3)} rg`);
-	page.commands.push(`${x.toFixed(2)} ${y.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re f`);
-	page.commands.push('0 g');
-}
-
-function renderInvoicePages(
-	snapshot: InvoicePdfSnapshot,
-	cidByCodePoint: Map<number, number>,
-	widthByCid: Map<number, number>
-) {
-	const pages: Page[] = [];
-	let page = createPage();
-	pages.push(page);
-
-	const RIGHT_X = A4_WIDTH - PAGE_MARGIN;
-	const CONTENT_W = RIGHT_X - PAGE_MARGIN;
-	const MID_X = PAGE_MARGIN + CONTENT_W / 2;
-	const HALF_W = CONTENT_W / 2 - 8;
-
-	function ensureSpace(height: number) {
-		if (page.y - height < PAGE_MARGIN + 20) {
-			page = createPage();
-			pages.push(page);
-		}
-	}
-
-	function rtext(str: string, rx: number, y: number, sz: number, col?: readonly [number, number, number]) {
-		const w = textWidth(str, sz, widthByCid, cidByCodePoint);
-		addText(page, str, rx - w, y, sz, cidByCodePoint, col);
-	}
-
-	// ── 1. HEADER ─────────────────────────────────────────────────────────────
-	const hY = page.y;
-
-	// Company name + contact info
-	addText(page, snapshot.company.legalName, PAGE_MARGIN, hY - 20, 13, cidByCodePoint, C_PRIMARY);
-	let cy = hY - 36;
-	if (snapshot.company.email)   { addText(page, snapshot.company.email,   PAGE_MARGIN, cy, 9, cidByCodePoint, C_MUTED); cy -= 16; }
-	if (snapshot.company.phone)   { addText(page, snapshot.company.phone,   PAGE_MARGIN, cy, 9, cidByCodePoint, C_MUTED); cy -= 16; }
-	if (snapshot.company.website) { addText(page, snapshot.company.website, PAGE_MARGIN, cy, 9, cidByCodePoint, C_MUTED); }
-
-	// Right: ФАКТУРА + meta
-	rtext('ФАКТУРА', RIGHT_X, hY - 24, 18, C_CHARCOAL);
-	const isDraft = !snapshot.invoiceNumber || snapshot.invoiceNumber === 'ЧЕРНОВА';
-	rtext(isDraft ? '(ЧЕРНОВА)' : '(ОРИГИНАЛ)', RIGHT_X, hY - 40, 11, C_MUTED);
-
-	const ML = 388;
-	addText(page, 'Номер:', ML, hY - 56, 8, cidByCodePoint, C_MUTED);
-	rtext(snapshot.invoiceNumber || '—', RIGHT_X, hY - 56, 9, C_BLACK);
-	addText(page, 'Дата:', ML, hY - 72, 8, cidByCodePoint, C_MUTED);
-	rtext(snapshot.issueDate || '—', RIGHT_X, hY - 72, 9, C_BLACK);
-	addText(page, 'Падеж:', ML, hY - 88, 8, cidByCodePoint, C_MUTED);
-	rtext(snapshot.dueDate || '—', RIGHT_X, hY - 88, 9, C_BLACK);
-
-	// Status badge
-	const bl = isDraft ? 'ЧЕРНОВА' : 'НЕПЛАТЕНА';
-	const bw = textWidth(bl, 8, widthByCid, cidByCodePoint) + 14;
-	addRect(page, RIGHT_X - bw, hY - 109, bw, 14, isDraft ? C_SURFACE_HIGH : C_BADGE_BG);
-	rtext(bl, RIGHT_X - 7, hY - 103, 8, isDraft ? C_MUTED : C_BADGE_FG);
-
-	// Header divider
-	const hBot = hY - 120;
-	addLine(page, PAGE_MARGIN, hBot, RIGHT_X, hBot, C_BORDER);
-	page.y = hBot - 16;
-
-	// ── 2. LEGAL GRID ─────────────────────────────────────────────────────────
-	function pfield(label: string, val: string | null | undefined, x: number, y: number): number {
-		if (!val) return y;
-		const paragraphs = val.split('\n').map((p) => p.trim()).filter(Boolean);
-		if (paragraphs.length === 0) return y;
-		addText(page, label, x, y, 8, cidByCodePoint, C_MUTED);
-		const lw = textWidth(label, 8, widthByCid, cidByCodePoint) + 3;
-		const allLines: string[] = [];
-		for (const para of paragraphs) {
-			allLines.push(...wrapText(para, HALF_W - lw - 4, 9, widthByCid, cidByCodePoint));
-		}
-		addText(page, allLines[0] ?? '', x + lw, y, 9, cidByCodePoint, C_BLACK);
-		let ny = y - 15;
-		for (let i = 1; i < allLines.length; i++) {
-			addText(page, allLines[i] ?? '', x + lw, ny, 9, cidByCodePoint, C_BLACK);
-			ny -= 15;
-		}
-		return ny;
-	}
-
-	// Section titles with underlines
-	addText(page, 'ДОСТАВЧИК', PAGE_MARGIN, page.y, 10, cidByCodePoint, C_CHARCOAL);
-	addLine(page, PAGE_MARGIN, page.y - 5, PAGE_MARGIN + HALF_W, page.y - 5, C_BORDER);
-	addText(page, 'КЛИЕНТ', MID_X + 4, page.y, 10, cidByCodePoint, C_CHARCOAL);
-	addLine(page, MID_X + 4, page.y - 5, MID_X + 4 + HALF_W, page.y - 5, C_BORDER);
-	page.y -= 18;
-
-	const partyY = page.y;
-
-	// Provider
-	addText(page, snapshot.company.legalName, PAGE_MARGIN, partyY, 10, cidByCodePoint, C_BLACK);
-	let lY = partyY - 16;
-	lY = pfield('ЕИК/БУЛСТАТ:', snapshot.company.registrationNumber, PAGE_MARGIN, lY);
-	lY = pfield('ДДС №:', snapshot.company.vatNumber, PAGE_MARGIN, lY);
-	lY = pfield('Адрес:', snapshot.company.address, PAGE_MARGIN, lY);
-	lY = pfield('МОЛ:', snapshot.company.molName, PAGE_MARGIN, lY);
-
-	// Client
-	addText(page, snapshot.client.legalName, MID_X + 4, partyY, 10, cidByCodePoint, C_BLACK);
-	let rY = partyY - 16;
-	rY = pfield('ЕИК/БУЛСТАТ:', snapshot.client.registrationNumber, MID_X + 4, rY);
-	rY = pfield('ДДС №:', snapshot.client.vatNumber, MID_X + 4, rY);
-	rY = pfield('Адрес:', snapshot.client.address, MID_X + 4, rY);
-	rY = pfield('МОЛ:', snapshot.client.molName, MID_X + 4, rY);
-
-	page.y = Math.min(lY, rY) - 12;
-	addLine(page, PAGE_MARGIN, page.y + 5, RIGHT_X, page.y + 5, C_BORDER);
-	page.y -= 16;
-
-	// ── 3. ITEMS TABLE ────────────────────────────────────────────────────────
-	const NW = 20, VW = 44, TW = 82;
-	const DX = PAGE_MARGIN + NW + 4;
-	const DW = CONTENT_W - NW - 4 - VW - TW;
-	const VX = DX + DW;
-
-	ensureSpace(24 + 30);
-	addRect(page, PAGE_MARGIN, page.y - 22, CONTENT_W, 22, C_TBL_HDR);
-	addText(page, '№', PAGE_MARGIN + 5, page.y - 14, 8, cidByCodePoint, C_MUTED);
-	addText(page, 'Описание', DX, page.y - 14, 8, cidByCodePoint, C_MUTED);
-	rtext('ДДС %', VX + VW, page.y - 14, 8, C_MUTED);
-	rtext('Сума', RIGHT_X - 4, page.y - 14, 8, C_MUTED);
-	page.y -= 22;
-
-	const vp = `${(snapshot.vatRateBasisPoints / 100).toFixed(0)}%`;
-	for (let gi = 0; gi < snapshot.projectGroups.length; gi++) {
-		const group = snapshot.projectGroups[gi];
-
-		// Pre-compute wrapped task lines
-		const taskLines = group.tasks.map((task) => {
-			const label = task.hours != null
-				? `${formatHours(task.hours)} — ${task.description}`
-				: task.description;
-			return wrapText(label, DW - 16, 8, widthByCid, cidByCodePoint);
-		});
-		const totalTaskLines = taskLines.reduce((s, l) => s + l.length, 0);
-		const taskBlockH = group.tasks.length > 0
-			? 8 + totalTaskLines * 13 + Math.max(0, group.tasks.length - 1) * 3 + 8
-			: 0;
-		const groupH = 22 + taskBlockH;
-
-		ensureSpace(Math.min(groupH + 4, A4_HEIGHT - PAGE_MARGIN * 2 - 20));
-
-		// Project header row
-		addRect(page, PAGE_MARGIN, page.y - 22, CONTENT_W, 22, gi % 2 === 0 ? C_SURFACE_HIGH : C_ALT_ROW);
-		const py = page.y - 13;
-		addText(page, String(gi + 1), PAGE_MARGIN + 5, py, 9, cidByCodePoint, C_MUTED);
-		addText(page, group.projectName, DX, py, 9, cidByCodePoint, C_BLACK);
-		rtext(vp, VX + VW - 4, py, 9, C_MUTED);
-		rtext(formatMoney(group.netAmountCents, snapshot.currency), RIGHT_X - 4, py, 9, C_BLACK);
-		page.y -= 22;
-
-		// Task sub-rows (descriptions, indented)
-		if (group.tasks.length > 0) {
-			let taskY = page.y - 8;
-			for (let ti = 0; ti < group.tasks.length; ti++) {
-				const lines = taskLines[ti] ?? [];
-				for (let j = 0; j < lines.length; j++) {
-					addText(page, lines[j] ?? '', DX + 12, taskY, 8, cidByCodePoint, C_MUTED);
-					taskY -= 13;
-				}
-				if (ti < group.tasks.length - 1) taskY -= 3;
-			}
-			page.y = taskY - 8;
-		}
-
-		addLine(page, PAGE_MARGIN, page.y + 2, RIGHT_X, page.y + 2, C_BORDER);
-	}
-
-	// ── 4. SUMMARY ────────────────────────────────────────────────────────────
-	page.y -= 10;
-	const SX = PAGE_MARGIN + CONTENT_W / 2;
-
-	function srow(
-		label: string, val: string,
-		lsz: number, vsz: number,
-		lc: readonly [number, number, number],
-		vc: readonly [number, number, number]
-	) {
-		ensureSpace(lsz + 12);
-		addText(page, label, SX, page.y, lsz, cidByCodePoint, lc);
-		rtext(val, RIGHT_X, page.y, vsz, vc);
-		page.y -= lsz + 10;
-	}
-
-	srow('Сума без ДДС:', formatMoney(snapshot.netTotalCents, snapshot.currency), 9, 9, C_MUTED, C_BLACK);
-	srow(`ДДС ${(snapshot.vatRateBasisPoints / 100).toFixed(0)}%:`, formatMoney(snapshot.vatTotalCents, snapshot.currency), 9, 9, C_MUTED, C_BLACK);
-	addLine(page, SX, page.y + 5, RIGHT_X, page.y + 5, C_BORDER);
-	page.y -= 4;
-	srow('Общо с ДДС:', formatMoney(snapshot.grossTotalCents, snapshot.currency), 12, 12, C_CHARCOAL, C_CHARCOAL);
-
-	const paid = snapshot.paidTotalCents ?? 0;
-	srow('Платено:', formatMoney(paid, snapshot.currency), 9, 9, C_MUTED, C_MUTED);
-
-	const rem = Math.max(0, snapshot.grossTotalCents - paid);
-	const rc: readonly [number, number, number] = rem > 0 ? C_ERROR : C_SUCCESS;
-	ensureSpace(24);
-	addRect(page, SX - 4, page.y - 5, RIGHT_X - SX + 4, 20, C_SURFACE_HIGH);
-	srow('Остатък за плащане:', formatMoney(rem, snapshot.currency), 10, 10, rc, rc);
-
-	// ── 5. PAYMENT SLIP ───────────────────────────────────────────────────────
-	if (snapshot.bankName || snapshot.bankIban || snapshot.bankBic) {
-		page.y -= 14;
-		const SH = 86;
-		ensureSpace(SH + 12);
-		const st = page.y;
-		const sb = st - SH;
-
-		// Dashed border rectangle
-		page.commands.push(`[4 3] 0 d ${C_MUTED[0].toFixed(3)} ${C_MUTED[1].toFixed(3)} ${C_MUTED[2].toFixed(3)} RG 0.5 w`);
-		page.commands.push(
-			`${PAGE_MARGIN.toFixed(2)} ${st.toFixed(2)} m ${RIGHT_X.toFixed(2)} ${st.toFixed(2)} l ` +
-			`${RIGHT_X.toFixed(2)} ${sb.toFixed(2)} l ${PAGE_MARGIN.toFixed(2)} ${sb.toFixed(2)} l ` +
-			`${PAGE_MARGIN.toFixed(2)} ${st.toFixed(2)} l S`
-		);
-		page.commands.push('[] 0 d 0 G 1 w');
-
-		addText(page, 'ДАННИ ЗА ПЛАЩАНЕ', PAGE_MARGIN + 8, st - 14, 9, cidByCodePoint, C_CHARCOAL);
-
-		const CW3 = CONTENT_W / 3;
-		const fy = st - 32;
-
-		addText(page, 'БАНКА', PAGE_MARGIN + 8, fy, 7, cidByCodePoint, C_MUTED);
-		if (snapshot.bankName) addText(page, snapshot.bankName, PAGE_MARGIN + 8, fy - 14, 9, cidByCodePoint, C_BLACK);
-
-		addText(page, 'IBAN', PAGE_MARGIN + 8 + CW3, fy, 7, cidByCodePoint, C_MUTED);
-		if (snapshot.bankIban) addText(page, snapshot.bankIban, PAGE_MARGIN + 8 + CW3, fy - 14, 9, cidByCodePoint, C_PRIMARY);
-
-		addText(page, 'BIC/SWIFT', PAGE_MARGIN + 8 + CW3 * 2, fy, 7, cidByCodePoint, C_MUTED);
-		if (snapshot.bankBic) addText(page, snapshot.bankBic, PAGE_MARGIN + 8 + CW3 * 2, fy - 14, 9, cidByCodePoint, C_BLACK);
-
-		const ry = fy - 38;
-		addText(page, 'ОСНОВАНИЕ ЗА ПЛАЩАНЕ', PAGE_MARGIN + 8, ry, 7, cidByCodePoint, C_MUTED);
-		addText(page, `Плащане по фактура №${snapshot.invoiceNumber}`, PAGE_MARGIN + 8, ry - 14, 9, cidByCodePoint, C_BLACK);
-		if (snapshot.dueDate) rtext(`Краен срок: ${snapshot.dueDate}`, RIGHT_X - 8, ry - 14, 8, C_MUTED);
-
-		page.y = sb - 12;
-	}
-
-	// Page numbers (post-pass so total page count is known)
-	const np = pages.length;
-	for (let p = 0; p < pages.length; p++) {
-		const pg = pages[p];
-		const pt = `Page ${p + 1} of ${np}`;
-		const pw = textWidth(pt, 8, widthByCid, cidByCodePoint);
-		pg.commands.push(`${C_MUTED[0].toFixed(3)} ${C_MUTED[1].toFixed(3)} ${C_MUTED[2].toFixed(3)} rg`);
-		pg.commands.push(
-			`BT /F1 8 Tf 1 0 0 1 ${(RIGHT_X - pw).toFixed(2)} ${(PAGE_MARGIN + 4).toFixed(2)} Tm <${encodeTextAsCidHex(pt, cidByCodePoint)}> Tj ET`
-		);
-		pg.commands.push('0 g');
-	}
-
-	return pages;
-}
-
-function buildToUnicodeCMap(cidByCodePoint: Map<number, number>) {
-	const entries = [...cidByCodePoint.entries()]
-		.map(([codePoint, cid]) => `<${toHex16(cid)}> <${toHex16(codePoint)}>`)
-		.join('\n');
-
-	return Buffer.from(
-		`/CIDInit /ProcSet findresource begin
-12 dict begin
-begincmap
-/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
-/CMapName /Adobe-Identity-UCS def
-/CMapType 2 def
-1 begincodespacerange
-<0000> <FFFF>
-endcodespacerange
-${cidByCodePoint.size} beginbfchar
-${entries}
-endbfchar
-endcmap
-CMapName currentdict /CMap defineresource pop
-end
-end`,
-		'utf8'
-	);
-}
-
-function buildPdfDocument(
-	pages: Page[],
-	fontInfo: TtfInfo,
-	cidByCodePoint: Map<number, number>,
-	glyphByCid: Map<number, number>,
-	widthByCid: Map<number, number>
-) {
-	const objects: Buffer[] = [];
-	const pushObject = (body: Buffer | string) => {
-		const buffer = typeof body === 'string' ? Buffer.from(body, 'binary') : body;
-		objects.push(buffer);
-		return objects.length;
-	};
-	const pushStream = (dictionary: string, stream: Buffer | string) => {
-		const streamBuffer = typeof stream === 'string' ? Buffer.from(stream, 'binary') : stream;
-		return pushObject(`${dictionary}\nstream\n${streamBuffer.toString('binary')}\nendstream`);
-	};
-
-	const fontFileId = pushStream(
-		`<< /Length ${fontInfo.fontBytes.length} /Length1 ${fontInfo.fontBytes.length} >>`,
-		fontInfo.fontBytes
-	);
-	const fontDescriptorId = pushObject(
-		`<< /Type /FontDescriptor /FontName /F1 /Flags 32 /FontBBox [${fontInfo.xMin} ${fontInfo.yMin} ${fontInfo.xMax} ${fontInfo.yMax}] /ItalicAngle 0 /Ascent ${fontInfo.ascent} /Descent ${fontInfo.descent} /CapHeight ${fontInfo.ascent} /StemV 80 /FontFile2 ${fontFileId} 0 R >>`
-	);
-
-	const maxCid = Math.max(...glyphByCid.keys(), 0);
-	const cidToGidMap = Buffer.alloc((maxCid + 1) * 2);
-	for (let cid = 1; cid <= maxCid; cid += 1) {
-		cidToGidMap.writeUInt16BE(glyphByCid.get(cid) ?? 0, cid * 2);
-	}
-	const cidToGidMapId = pushStream(`<< /Length ${cidToGidMap.length} >>`, cidToGidMap);
-
-	const widths = Array.from({ length: maxCid }, (_, index) => widthByCid.get(index + 1) ?? 500).join(' ');
-	const cidFontId = pushObject(
-		`<< /Type /Font /Subtype /CIDFontType2 /BaseFont /F1 /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor ${fontDescriptorId} 0 R /W [1 [${widths}]] /CIDToGIDMap ${cidToGidMapId} 0 R >>`
-	);
-	const toUnicode = buildToUnicodeCMap(cidByCodePoint);
-	const toUnicodeId = pushStream(`<< /Length ${toUnicode.length} >>`, toUnicode);
-	const type0FontId = pushObject(
-		`<< /Type /Font /Subtype /Type0 /BaseFont /F1 /Encoding /Identity-H /DescendantFonts [${cidFontId} 0 R] /ToUnicode ${toUnicodeId} 0 R >>`
-	);
-
-	const pageIds: number[] = [];
-	for (const page of pages) {
-		const contents = Buffer.from(page.commands.join('\n'), 'utf8');
-		const contentsId = pushStream(`<< /Length ${contents.length} >>`, contents);
-		const pageId = pushObject(
-			`<< /Type /Page /Parent PAGES_ID 0 R /MediaBox [0 0 ${A4_WIDTH} ${A4_HEIGHT}] /Contents ${contentsId} 0 R /Resources << /Font << /F1 ${type0FontId} 0 R >> >> >>`
-		);
-		pageIds.push(pageId);
-	}
-
-	const pagesId = pushObject(
-		`<< /Type /Pages /Count ${pageIds.length} /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] >>`
-	);
-	const catalogId = pushObject(`<< /Type /Catalog /Pages ${pagesId} 0 R >>`);
-
-	for (let index = 0; index < pageIds.length; index += 1) {
-		objects[pageIds[index] - 1] = Buffer.from(
-			objects[pageIds[index] - 1].toString('binary').replace('PAGES_ID', String(pagesId)),
-			'binary'
-		);
-	}
-
-	let offset = 0;
-	const chunks: Buffer[] = [Buffer.from('%PDF-1.4\n%\xFF\xFF\xFF\xFF\n', 'binary')];
-	offset += chunks[0].length;
-	const xrefOffsets = [0];
-
-	for (let index = 0; index < objects.length; index += 1) {
-		xrefOffsets.push(offset);
-		const objectBuffer = Buffer.from(`${index + 1} 0 obj\n`, 'binary');
-		const endBuffer = Buffer.from('\nendobj\n', 'binary');
-		chunks.push(objectBuffer, objects[index], endBuffer);
-		offset += objectBuffer.length + objects[index].length + endBuffer.length;
-	}
-
-	const xrefOffset = offset;
-	const xrefBody = xrefOffsets
-		.map((entry, index) =>
-			index === 0 ? '0000000000 65535 f ' : `${entry.toString().padStart(10, '0')} 00000 n `
-		)
-		.join('\n');
-	chunks.push(
-		Buffer.from(
-			`xref\n0 ${xrefOffsets.length}\n${xrefBody}\ntrailer\n<< /Size ${xrefOffsets.length} /Root ${catalogId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`,
-			'binary'
-		)
-	);
-
-	return Buffer.concat(chunks);
-}
-
-export async function generateInvoicePdf(snapshot: InvoicePdfSnapshot) {
-	const fontInfo = await loadFontInfo();
-	const strings = [
-		'ФАКТУРА',
-		'(ОРИГИНАЛ)', '(ЧЕРНОВА)',
-		'НЕПЛАТЕНА', 'ЧЕРНОВА',
-		'Номер:', 'Дата:', 'Падеж:',
-		'ДОСТАВЧИК', 'КЛИЕНТ',
-		'ЕИК/БУЛСТАТ:', 'ДДС №:', 'Адрес:', 'МОЛ:',
-		'Описание', 'ДДС %', 'Сума',
-		'Сума без ДДС:',
-		'Общо с ДДС:',
-		'Платено:',
-		'Остатък за плащане:',
-		'ДАННИ ЗА ПЛАЩАНЕ',
-		'БАНКА', 'IBAN', 'BIC/SWIFT',
-		'ОСНОВАНИЕ ЗА ПЛАЩАНЕ',
-		'Плащане по фактура №',
-		'Краен срок: ',
-		'Page 1 of 1', 'Page 1 of 2', 'Page 2 of 2',
-		'—',
-		formatPaymentMethod(snapshot.paymentMethod),
-		snapshot.invoiceNumber,
-		snapshot.issueDate,
-		snapshot.dueDate ?? '—',
-		snapshot.company.legalName,
-		snapshot.company.registrationNumber ?? '',
-		snapshot.company.vatNumber ?? '',
-		snapshot.company.address ?? '',
-		snapshot.company.molName ?? '',
-		snapshot.company.email ?? '',
-		snapshot.company.phone ?? '',
-		snapshot.company.website ?? '',
-		snapshot.client.legalName,
-		snapshot.client.registrationNumber ?? '',
-		snapshot.client.vatNumber ?? '',
-		snapshot.client.address ?? '',
-		snapshot.client.molName ?? '',
-		snapshot.bankName ?? '',
-		snapshot.bankIban ?? '',
-		snapshot.bankBic ?? '',
-		`Плащане по фактура №${snapshot.invoiceNumber}`,
-		snapshot.dueDate ? `Краен срок: ${snapshot.dueDate}` : '',
-		`ДДС ${(snapshot.vatRateBasisPoints / 100).toFixed(0)}%:`,
-		`${(snapshot.vatRateBasisPoints / 100).toFixed(0)}%`,
-		'h ', 'min', ' — ',
-		...snapshot.projectGroups.flatMap((group) => [
-			group.projectName,
-			formatMoney(group.netAmountCents, snapshot.currency),
-			...group.tasks.flatMap((task) => [
-				task.description,
-				task.hours != null ? formatHours(task.hours) : '',
-				formatMoney(task.amountCents, snapshot.currency)
-			])
-		]),
-		formatMoney(snapshot.netTotalCents, snapshot.currency),
-		formatMoney(snapshot.vatTotalCents, snapshot.currency),
-		formatMoney(snapshot.grossTotalCents, snapshot.currency),
-		formatMoney(snapshot.paidTotalCents ?? 0, snapshot.currency),
-		formatMoney(Math.max(0, snapshot.grossTotalCents - (snapshot.paidTotalCents ?? 0)), snapshot.currency)
-	];
-	const { cidByCodePoint, glyphByCid, widthByCid } = buildFontMaps(fontInfo, strings);
-	const pages = renderInvoicePages(snapshot, cidByCodePoint, widthByCid);
-	return buildPdfDocument(pages, fontInfo, cidByCodePoint, glyphByCid, widthByCid);
 }
