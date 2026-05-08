@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import type { PageData, ActionData } from './$types';
+	import { fmtDate as formatDate } from '$lib/utils/format';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -10,11 +11,6 @@
 		const sign = cents < 0 ? '-' : '';
 		const abs = Math.abs(cents);
 		return `${sign}${(abs / 100).toFixed(2)} лв.`;
-	}
-
-	function formatDate(date: Date | string): string {
-		const d = typeof date === 'string' ? new Date(date) : date;
-		return d.toLocaleDateString('bg-BG', { day: '2-digit', month: '2-digit', year: 'numeric' });
 	}
 
 	const entryTypeLabels: Record<string, string> = {

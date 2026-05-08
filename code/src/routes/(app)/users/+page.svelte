@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ActionData, PageData } from './$types';
+	import { fmtDate as formatDate } from '$lib/utils/format';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -50,15 +51,6 @@
 		}
 
 		return `${(value / 100).toFixed(2)} ${data.company?.currency ?? 'EUR'}`;
-	}
-
-	function formatDate(value: string | Date) {
-		return new Intl.DateTimeFormat('bg-BG', {
-			day: '2-digit',
-			month: 'short',
-			year: 'numeric',
-			timeZone: 'UTC'
-		}).format(new Date(value));
 	}
 
 	function latestRates(user: PageData['users'][number]) {

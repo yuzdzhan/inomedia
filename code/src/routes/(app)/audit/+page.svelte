@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { PageData } from './$types';
+	import { fmtDateTime as formatDateTime } from '$lib/utils/format';
 
 	let { data }: { data: PageData } = $props();
 
@@ -40,13 +41,6 @@
 		generic_movement_recorded: 'Записано движение',
 		transfer_recorded: 'Записан трансфер'
 	};
-
-	function formatDateTime(value: Date | string) {
-		return new Intl.DateTimeFormat('bg-BG', {
-			day: '2-digit', month: 'short', year: 'numeric',
-			hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Sofia'
-		}).format(new Date(value));
-	}
 
 	function labelForEventType(et: string) {
 		return eventTypeLabels[et] ?? et;

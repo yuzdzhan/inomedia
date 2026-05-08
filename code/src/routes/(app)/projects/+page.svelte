@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { ActionData, PageData } from './$types';
 	import Icon from '$lib/components/Icon.svelte';
+	import { fmtDate as formatDate } from '$lib/utils/format';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -78,10 +79,6 @@
 	function canViewProjectRates(project: { primaryManagerUserId: string }) {
 		if (data.permissions.currentUserRole === 'admin' || data.permissions.currentUserRole === 'accountant') return true;
 		return data.permissions.currentUserRole === 'manager' && project.primaryManagerUserId === data.permissions.currentUserId;
-	}
-
-	function formatDate(value: string | Date) {
-		return new Intl.DateTimeFormat('bg-BG', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(value));
 	}
 
 	function formatMoneyFromCents(value: number | null | undefined) {

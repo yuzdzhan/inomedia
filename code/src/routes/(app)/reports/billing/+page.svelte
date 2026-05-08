@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { PageData } from './$types';
+	import { fmtDate as formatDate } from '$lib/utils/format';
 
 	let { data }: { data: PageData } = $props();
 
@@ -7,11 +8,6 @@
 		return (cents / 100).toFixed(2) + ' лв.';
 	}
 
-	function formatDate(date: Date | string | null): string {
-		if (!date) return '—';
-		const d = typeof date === 'string' ? new Date(date) : date;
-		return d.toLocaleDateString('bg-BG', { day: '2-digit', month: '2-digit', year: 'numeric' });
-	}
 
 	const statusLabels: Record<string, string> = {
 		issued: 'Издадена',

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import type { PageData, ActionData } from './$types';
+	import { fmtDate } from '$lib/utils/format';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -8,11 +9,6 @@
 		const h = Math.floor(mins / 60);
 		const m = mins % 60;
 		return `${h}ч ${String(m).padStart(2, '0')}м`;
-	}
-
-	function fmtDate(date: Date | string): string {
-		const d = typeof date === 'string' ? new Date(date) : date;
-		return d.toLocaleDateString('bg-BG', { day: '2-digit', month: '2-digit' });
 	}
 
 	function fmtAmount(cents: number): string {

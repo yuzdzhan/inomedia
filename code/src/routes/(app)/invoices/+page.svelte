@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { ActionData, PageData } from './$types';
 	import Icon from '$lib/components/Icon.svelte';
+	import { fmtDate } from '$lib/utils/format';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -20,11 +21,6 @@
 
 	function fmtMoney(cents: number) {
 		return (cents / 100).toLocaleString('bg-BG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-	}
-
-	function fmtDate(value: string | Date | null) {
-		if (!value) return '—';
-		return new Intl.DateTimeFormat('bg-BG', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' }).format(new Date(value));
 	}
 
 	function dateInputValue(value: string | Date | null) {

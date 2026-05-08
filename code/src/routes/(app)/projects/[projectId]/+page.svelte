@@ -1,6 +1,7 @@
 ﻿<script lang="ts">
 	import type { ActionData, PageData } from './$types';
 	import Icon from '$lib/components/Icon.svelte';
+	import { fmtDate, fmtDateTime } from '$lib/utils/format';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -81,16 +82,10 @@
 
 	function formatDeadline(value: string) {
 		if (!value) return 'Без срок';
-		return new Intl.DateTimeFormat('bg-BG', {
-			day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC'
-		}).format(new Date(`${value}T00:00:00.000Z`));
+		return fmtDate(value);
 	}
 
-	function formatDateTime(value: string) {
-		return new Intl.DateTimeFormat('bg-BG', {
-			day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
-		}).format(new Date(value));
-	}
+	function formatDateTime(value: string) { return fmtDateTime(value); }
 
 	function formatAttachmentSize(sizeBytes: number) {
 		if (sizeBytes < 1024) return `${sizeBytes} B`;
@@ -208,10 +203,7 @@
 		return `${h}ч ${m.toString().padStart(2, '0')}м`;
 	}
 
-	function formatShortDate(value: Date | string) {
-		const date = value instanceof Date ? value : new Date(`${value}T00:00:00.000Z`);
-		return new Intl.DateTimeFormat('bg-BG', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(date);
-	}
+	function formatShortDate(value: Date | string) { return fmtDate(value); }
 
 	function formatMinuteOfDay(value: number | null) {
 		if (value == null) return '';

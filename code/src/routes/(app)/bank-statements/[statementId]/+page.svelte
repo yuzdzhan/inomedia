@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import type { PageData, ActionData } from './$types';
+	import { fmtDate as formatDate, fmtDateTime as formatDateTime } from '$lib/utils/format';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -8,15 +9,6 @@
 	let selectedInvoiceId = $state<Record<string, string>>({});
 	let submitting = $state(false);
 
-	function formatDate(date: Date | string): string {
-		const d = typeof date === 'string' ? new Date(date) : date;
-		return d.toLocaleDateString('bg-BG', { day: '2-digit', month: '2-digit', year: 'numeric' });
-	}
-
-	function formatDateTime(date: Date | string): string {
-		const d = typeof date === 'string' ? new Date(date) : date;
-		return d.toLocaleString('bg-BG', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-	}
 
 	function formatAmount(cents: number): string {
 		const sign = cents < 0 ? '-' : '';

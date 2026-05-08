@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ActionData, PageData } from './$types';
+	import { fmtDate as formatDate } from '$lib/utils/format';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -25,12 +26,6 @@
 
 	function formatAmount(cents: number) {
 		return (cents / 100).toFixed(2);
-	}
-
-	function formatDate(d: string | Date) {
-		if (!d) return '';
-		const date = typeof d === 'string' ? new Date(d) : d;
-		return date.toLocaleDateString('bg-BG');
 	}
 
 	function toInputDate(d: string | Date | null) {

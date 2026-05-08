@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { PageData } from './$types';
 	import Icon from '$lib/components/Icon.svelte';
+	import { fmtDate, fmtDateShort } from '$lib/utils/format';
 
 	let { data }: { data: PageData } = $props();
 
@@ -10,18 +11,6 @@
 
 	function fmtMoney(cents: number): string {
 		return (cents / 100).toLocaleString('bg-BG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-	}
-
-	function fmtDate(date: Date | string | null | undefined): string {
-		if (!date) return '—';
-		const d = new Date(date);
-		return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
-	}
-
-	function fmtDateShort(date: Date | string | null | undefined): string {
-		if (!date) return '—';
-		const d = new Date(date);
-		return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`;
 	}
 
 	function fmtDuration(minutes: number | null | undefined): string {
