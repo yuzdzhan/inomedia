@@ -150,6 +150,59 @@
 		</div>
 	</div>
 
+	{#if (form as any)?.contactError}
+		<div class="alert danger" style="margin-top:12px;">{(form as any).contactError}</div>
+	{/if}
+	{#if (form as any)?.contactSuccess}
+		<div class="alert success" style="margin-top:12px;">Контактните данни са обновени.</div>
+	{/if}
+
+	<div class="card" style="margin-top:16px;">
+		<div class="card-header"><h3 class="card-title">Контакти и банкови данни</h3></div>
+		<form method="POST" action="?/updateCompanyContact" style="padding:16px; display:flex; flex-direction:column; gap:12px;">
+			<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;">
+				<div class="field" style="margin:0;">
+					<label class="label" for="email">Имейл</label>
+					<input class="input" id="email" name="email" type="email"
+						value={(form as any)?.contactValues?.email ?? data.company.email ?? ''} />
+					{#if (form as any)?.contactErrors?.email}<span style="font-size:11px; color:var(--danger);">{(form as any).contactErrors.email[0]}</span>{/if}
+				</div>
+				<div class="field" style="margin:0;">
+					<label class="label" for="phone">Телефон</label>
+					<input class="input" id="phone" name="phone" type="text"
+						value={(form as any)?.contactValues?.phone ?? data.company.phone ?? ''} />
+				</div>
+				<div class="field" style="margin:0;">
+					<label class="label" for="website">Уебсайт</label>
+					<input class="input" id="website" name="website" type="text"
+						value={(form as any)?.contactValues?.website ?? data.company.website ?? ''} />
+				</div>
+			</div>
+			<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;">
+				<div class="field" style="margin:0;">
+					<label class="label" for="bankName">Банка</label>
+					<input class="input" id="bankName" name="bankName" type="text"
+						value={(form as any)?.contactValues?.bankName ?? data.company.bankName ?? ''} />
+				</div>
+				<div class="field" style="margin:0;">
+					<label class="label" for="bankIban">IBAN</label>
+					<input class="input" id="bankIban" name="bankIban" type="text"
+						style="font-family:var(--font-mono);"
+						value={(form as any)?.contactValues?.bankIban ?? data.company.bankIban ?? ''} />
+				</div>
+				<div class="field" style="margin:0;">
+					<label class="label" for="bankBic">BIC / SWIFT</label>
+					<input class="input" id="bankBic" name="bankBic" type="text"
+						style="font-family:var(--font-mono);"
+						value={(form as any)?.contactValues?.bankBic ?? data.company.bankBic ?? ''} />
+				</div>
+			</div>
+			<div>
+				<button type="submit" class="btn btn-primary btn-sm">Запази</button>
+			</div>
+		</form>
+	</div>
+
 	{#if (form as any)?.balanceError}
 		<div class="alert danger" style="margin-top:12px;">{(form as any).balanceError}</div>
 	{/if}
