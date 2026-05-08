@@ -51,7 +51,7 @@
 		<h1 class="page-title">Времелог</h1>
 		<p class="page-sub">
 			{data.logs.length} записа · {fmtMinutes(data.totalMinutes)} общо
-			{#if data.totalAmountCents > 0}· {fmtAmount(data.totalAmountCents)} лв.{/if}
+			{#if data.totalAmountCents > 0}· {fmtAmount(data.totalAmountCents)} EUR{/if}
 		</p>
 	</div>
 </div>

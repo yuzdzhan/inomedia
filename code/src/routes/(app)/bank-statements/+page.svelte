@@ -102,9 +102,10 @@
 	</div>
 	<div style="padding: 12px 16px;">
 		<p class="muted" style="font-size: 12px; margin: 0;">
-			Поддържани формати: CSV или TXT с формат <code style="background: var(--surface); padding: 1px 4px; border-radius: var(--r-sm); font-family: var(--font-mono);">дата;описание;сума</code> (разделени с точка и
-			запетая). Датата може да е в ГГГГ-ММ-ДД или ДД.ММ.ГГГГ формат. PDF файловете се съхраняват, но
-			не се разбират автоматично.
+			Поддържани формати:<br />
+			• <strong>UniCredit България</strong> — CSV експорт директно от интернет банкирането (запетая-разделен, колони Сметка/Дата/Описание/Сума/Тип).<br />
+			• <strong>Прост формат</strong> — CSV или TXT с колони <code style="background: var(--surface); padding: 1px 4px; border-radius: var(--r-sm); font-family: var(--font-mono);">дата;описание;сума</code> (разделени с точка и запетая). Датата може да е в ГГГГ-ММ-ДД или ДД.ММ.ГГГГ формат.<br />
+			PDF файловете се съхраняват, но не се разбират автоматично.
 		</p>
 	</div>
 </div>

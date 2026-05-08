@@ -53,7 +53,7 @@ export const load: PageServerLoad = async ({ parent }) => {
 
 		await ensureCompanyDefaults(db, company.id);
 
-		const [expenseCategories, internalClient] = await db.$transaction([
+		const [expenseCategories, internalClient, moneyContainers] = await db.$transaction([
 			db.expenseCategory.findMany({
 				where: { companyId: company.id },
 				orderBy: [{ isActive: 'desc' }, { name: 'asc' }]
@@ -69,13 +69,18 @@ export const load: PageServerLoad = async ({ parent }) => {
 						select: { projects: true }
 					}
 				}
+			}),
+			db.moneyContainer.findMany({
+				where: { companyId: company.id },
+				orderBy: { containerType: 'asc' }
 			})
 		]);
 
 		return {
 			company,
 			expenseCategories,
-			internalClient
+			internalClient,
+			moneyContainers
 		};
 	} catch (e) {
 		if (isRedirect(e) || isHttpError(e)) throw e;
@@ -222,6 +227,46 @@ export const actions: Actions = {
 		});
 
 		return { categorySuccess: true };
+	},
+
+	updateContainerBalance: async ({ request, locals, getClientAddress }) => {
+		if (locals.user?.role !== 'admin') {
+			return fail(403, { balanceError: 'Нямате права за тази операция.' });
+		}
+
+		const formData = await request.formData();
+		const containerId = String(formData.get('containerId') ?? '');
+		const balanceStr = String(formData.get('openingBalance') ?? '');
+		const balanceEur = parseFloat(balanceStr);
+
+		if (!containerId || isNaN(balanceEur)) {
+			return fail(422, { balanceError: 'Невалидни данни.' });
+		}
+
+		const container = await db.moneyContainer.findUnique({ where: { id: containerId } });
+		if (!container) {
+			return fail(404, { balanceError: 'Сметката не е намерена.' });
+		}
+
+		const openingBalanceCents = Math.round(balanceEur * 100);
+
+		await db.moneyContainer.update({
+			where: { id: containerId },
+			data: { openingBalanceCents }
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'container_opening_balance_updated',
+			entityType: 'money_container',
+			entityId: containerId,
+			oldValueJson: { openingBalanceCents: container.openingBalanceCents, name: container.name },
+			newValueJson: { openingBalanceCents, name: container.name },
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return { balanceSuccess: containerId };
 	},
 
 	toggleExpenseCategory: async ({ request, locals }) => {

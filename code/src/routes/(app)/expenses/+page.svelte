@@ -244,7 +244,7 @@
 		<div class="stat">
 			<div class="stat-label">Общо разходи</div>
 			<div class="stat-value">{formatAmount(totalExpensesAmount)}</div>
-			<div class="stat-delta">лв.</div>
+			<div class="stat-delta">EUR</div>
 		</div>
 		<div class="stat">
 			<div class="stat-label">От шаблон</div>
@@ -460,7 +460,7 @@
 									<span class="muted">Режийни</span>
 								{/if}
 							</td>
-							<td class="num amount">{formatAmount(expense.amountCents)} лв.</td>
+							<td class="num amount">{formatAmount(expense.amountCents)} EUR</td>
 							<td>
 								{#if expense.status === 'paid'}
 									<span class="badge inv-paid">Платен</span>
@@ -820,7 +820,7 @@
 							<td style="font-weight: 500;">{tpl.description}</td>
 							<td class="muted">{tpl.category.name}</td>
 							<td><span class="badge outline">{formatFrequency(tpl.frequency)}</span></td>
-							<td class="num amount">{formatAmount(tpl.amountCents)} лв.</td>
+							<td class="num amount">{formatAmount(tpl.amountCents)} EUR</td>
 							<td class="amount muted">{formatDate(tpl.startDate)}</td>
 							<td class="amount muted">{tpl.endDate ? formatDate(tpl.endDate) : '—'}</td>
 							<td class="muted">

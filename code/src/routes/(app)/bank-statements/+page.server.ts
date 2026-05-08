@@ -16,13 +16,54 @@ async function getCompanyOrRedirect() {
 	return company;
 }
 
-function parseStatementRows(
-	text: string
+function parseUniCreditRows(
+	lines: string[]
 ): Array<{ date: Date; description: string; amountCents: number }> {
+	const results = [];
+	// Skip header row
+	for (const line of lines.slice(1)) {
+		const parts = line.split(',');
+		if (parts.length < 7) continue;
+		// Columns: 0=account, 1=date (DD.MM.YYYY HH:MM:SS), 2=description,
+		//          3=amount_acct, 4=amount_op, 5=rate, 6=type (ДТ/КТ), ...
+		const dateStr = parts[1].trim();
+		const description = parts[2].trim();
+		const amountStr = parts[3].trim();
+		const typeStr = parts[6].trim();
+
+		const dateMatch = dateStr.match(/^(\d{2})\.(\d{2})\.(\d{4})/);
+		if (!dateMatch) continue;
+		const [, d, m, y] = dateMatch;
+		const date = new Date(`${y}-${m}-${d}`);
+		if (isNaN(date.getTime())) continue;
+
+		const amount = parseFloat(amountStr.replace(',', '.'));
+		if (isNaN(amount)) continue;
+
+		// КТ = credit (incoming, positive), ДТ = debit (outgoing, negative)
+		const sign = typeStr === 'КТ' ? 1 : -1;
+		const amountCents = Math.round(amount * 100) * sign;
+
+		results.push({ date, description, amountCents });
+	}
+	return results;
+}
+
+function parseStatementRows(text: string): {
+	rows: Array<{ date: Date; description: string; amountCents: number }>;
+	parsingVersion: string;
+} {
 	const lines = text
 		.split('\n')
 		.map((l) => l.trim())
 		.filter(Boolean);
+
+	// Detect UniCredit Bulgaria CSV (header starts with "Сметка," and has "Тип" column)
+	if (lines.length > 0 && lines[0].startsWith('Сметка,') && lines[0].includes(',Тип,')) {
+		return { rows: parseUniCreditRows(lines), parsingVersion: 'v2-unicredit-csv' };
+	}
+
+	// Simple semicolon-separated format: date;description;amount
 	const results = [];
 	for (const line of lines) {
 		const parts = line.split(';');
@@ -41,7 +82,7 @@ function parseStatementRows(
 		const amountCents = Math.round(amount * 100);
 		results.push({ date, description: description.trim(), amountCents });
 	}
-	return results;
+	return { rows: results, parsingVersion: 'v1-csv' };
 }
 
 export const load: PageServerLoad = async ({ parent }) => {
@@ -118,11 +159,14 @@ export const actions: Actions = {
 
 		let parsedRows: Array<{ date: Date; description: string; amountCents: number }> = [];
 		let parseStatus = 'ok';
+		let parsingVersion = 'v1-csv';
 
 		try {
 			const textDecoder = new TextDecoder('utf-8', { fatal: true });
 			const text = textDecoder.decode(arrayBuffer);
-			parsedRows = parseStatementRows(text);
+			const result = parseStatementRows(text);
+			parsedRows = result.rows;
+			parsingVersion = result.parsingVersion;
 			if (parsedRows.length === 0 && sizeBytes > 0) {
 				parseStatus = 'parse_failed';
 			}
@@ -139,7 +183,7 @@ export const actions: Actions = {
 					sizeBytes,
 					fileBlob,
 					parseStatus,
-					parsingVersion: 'v1-csv',
+					parsingVersion,
 					importedByUserId: locals.user!.id
 				}
 			});

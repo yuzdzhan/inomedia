@@ -6,17 +6,14 @@
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let openMatchRowId = $state<string | null>(null);
+	let openExpenseRowId = $state<string | null>(null);
+	let openNewExpenseRowId = $state<string | null>(null);
 	let selectedInvoiceId = $state<Record<string, string>>({});
+	let selectedExpenseId = $state<Record<string, string>>({});
 	let submitting = $state(false);
 
 
 	function formatAmount(cents: number): string {
-		const sign = cents < 0 ? '-' : '';
-		const abs = Math.abs(cents);
-		return `${sign}${(abs / 100).toFixed(2)} лв.`;
-	}
-
-	function formatAmountEur(cents: number): string {
 		const sign = cents < 0 ? '-' : '';
 		const abs = Math.abs(cents);
 		return `${sign}${(abs / 100).toFixed(2)} EUR`;
@@ -47,6 +44,19 @@
 
 	function toggleMatchPanel(rowId: string) {
 		openMatchRowId = openMatchRowId === rowId ? null : rowId;
+		openExpenseRowId = null;
+	}
+
+	function toggleExpensePanel(rowId: string) {
+		openExpenseRowId = openExpenseRowId === rowId ? null : rowId;
+		openMatchRowId = null;
+		openNewExpenseRowId = null;
+	}
+
+	function toggleNewExpensePanel(rowId: string) {
+		openNewExpenseRowId = openNewExpenseRowId === rowId ? null : rowId;
+		openExpenseRowId = null;
+		openMatchRowId = null;
 	}
 </script>
 
@@ -144,10 +154,59 @@
 												<select class="select" name="invoiceId" bind:value={selectedInvoiceId[row.id]} style="width:100%; margin-bottom:8px;">
 													<option value="">— Изберете фактура —</option>
 													{#each data.openInvoices as inv}
-														<option value={inv.id}>#{inv.invoiceNumber ?? 'черн.'} · {inv.clientName} · {formatAmountEur(inv.remainingCents)} остатък</option>
+														<option value={inv.id}>#{inv.invoiceNumber ?? 'черн.'} · {inv.clientName} · {formatAmount(inv.remainingCents)} остатък</option>
 													{/each}
 												</select>
 												<button type="submit" class="btn btn-primary btn-sm" disabled={submitting || !selectedInvoiceId[row.id]}>Свържи</button>
+											</form>
+										</div>
+									{/if}
+								{:else}
+									<button type="button" class="btn btn-secondary btn-sm" onclick={() => toggleExpensePanel(row.id)}>
+										Свържи с разход…
+									</button>
+									<button type="button" class="btn btn-secondary btn-sm" onclick={() => toggleNewExpensePanel(row.id)}>
+										Нов разход…
+									</button>
+									{#if openExpenseRowId === row.id}
+										<div style="margin-top:4px; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); display:flex; flex-direction:column; gap:8px; min-width:320px;">
+											<form method="POST" action="?/matchExpense" use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; openExpenseRowId = null; await update(); }; }}>
+												<input type="hidden" name="rowId" value={row.id} />
+												<select class="select" name="expenseId" bind:value={selectedExpenseId[row.id]} style="width:100%; margin-bottom:8px;">
+													<option value="">— Изберете разход —</option>
+													{#each data.unpaidExpenses as exp}
+														<option value={exp.id}>{exp.categoryName} · {exp.description} · {formatAmount(exp.amountCents)}</option>
+													{/each}
+												</select>
+												<button type="submit" class="btn btn-primary btn-sm" disabled={submitting || !selectedExpenseId[row.id]}>Свържи</button>
+											</form>
+										</div>
+									{/if}
+									{#if openNewExpenseRowId === row.id}
+										<div style="margin-top:4px; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); min-width:340px;">
+											<form method="POST" action="?/createAndMatchExpense" style="display:flex; flex-direction:column; gap:8px;"
+												use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; openNewExpenseRowId = null; await update(); }; }}>
+												<input type="hidden" name="rowId" value={row.id} />
+												<select class="select" name="categoryId" required>
+													<option value="">— Категория —</option>
+													{#each data.expenseCategories as cat}
+														<option value={cat.id}>{cat.name}</option>
+													{/each}
+												</select>
+												<input class="input" name="description" type="text" placeholder="Описание" required
+													value={row.description} />
+												<div style="display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center;">
+													<input class="input" name="amount" type="number" step="0.01" min="0.01"
+														placeholder="Сума" required
+														value={(Math.abs(row.amountCents) / 100).toFixed(2)}
+														style="font-family:var(--font-mono);" />
+													<span style="font-size:13px; color:var(--text-muted);">EUR</span>
+												</div>
+												<input class="input" name="incurredDate" type="date" required
+													value={row.transactionDate instanceof Date
+														? row.transactionDate.toISOString().slice(0, 10)
+														: String(row.transactionDate).slice(0, 10)} />
+												<button type="submit" class="btn btn-primary btn-sm" disabled={submitting}>Създай и свържи</button>
 											</form>
 										</div>
 									{/if}
@@ -210,10 +269,59 @@
 												<select class="select" name="invoiceId" bind:value={selectedInvoiceId[row.id]} style="width:100%; margin-bottom:8px;">
 													<option value="">— Изберете фактура —</option>
 													{#each data.openInvoices as inv}
-														<option value={inv.id}>#{inv.invoiceNumber ?? 'черн.'} · {inv.clientName} · {formatAmountEur(inv.remainingCents)} остатък</option>
+														<option value={inv.id}>#{inv.invoiceNumber ?? 'черн.'} · {inv.clientName} · {formatAmount(inv.remainingCents)} остатък</option>
 													{/each}
 												</select>
 												<button type="submit" class="btn btn-primary btn-sm" disabled={submitting || !selectedInvoiceId[row.id]}>Свържи</button>
+											</form>
+										</div>
+									{/if}
+								{:else}
+									<button type="button" class="btn btn-secondary btn-sm" onclick={() => toggleExpensePanel(row.id)}>
+										Свържи с разход…
+									</button>
+									<button type="button" class="btn btn-secondary btn-sm" onclick={() => toggleNewExpensePanel(row.id)}>
+										Нов разход…
+									</button>
+									{#if openExpenseRowId === row.id}
+										<div style="margin-top:4px; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); display:flex; flex-direction:column; gap:8px; min-width:320px;">
+											<form method="POST" action="?/matchExpense" use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; openExpenseRowId = null; await update(); }; }}>
+												<input type="hidden" name="rowId" value={row.id} />
+												<select class="select" name="expenseId" bind:value={selectedExpenseId[row.id]} style="width:100%; margin-bottom:8px;">
+													<option value="">— Изберете разход —</option>
+													{#each data.unpaidExpenses as exp}
+														<option value={exp.id}>{exp.categoryName} · {exp.description} · {formatAmount(exp.amountCents)}</option>
+													{/each}
+												</select>
+												<button type="submit" class="btn btn-primary btn-sm" disabled={submitting || !selectedExpenseId[row.id]}>Свържи</button>
+											</form>
+										</div>
+									{/if}
+									{#if openNewExpenseRowId === row.id}
+										<div style="margin-top:4px; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md); min-width:340px;">
+											<form method="POST" action="?/createAndMatchExpense" style="display:flex; flex-direction:column; gap:8px;"
+												use:enhance={() => { submitting = true; return async ({ update }) => { submitting = false; openNewExpenseRowId = null; await update(); }; }}>
+												<input type="hidden" name="rowId" value={row.id} />
+												<select class="select" name="categoryId" required>
+													<option value="">— Категория —</option>
+													{#each data.expenseCategories as cat}
+														<option value={cat.id}>{cat.name}</option>
+													{/each}
+												</select>
+												<input class="input" name="description" type="text" placeholder="Описание" required
+													value={row.description} />
+												<div style="display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center;">
+													<input class="input" name="amount" type="number" step="0.01" min="0.01"
+														placeholder="Сума" required
+														value={(Math.abs(row.amountCents) / 100).toFixed(2)}
+														style="font-family:var(--font-mono);" />
+													<span style="font-size:13px; color:var(--text-muted);">EUR</span>
+												</div>
+												<input class="input" name="incurredDate" type="date" required
+													value={row.transactionDate instanceof Date
+														? row.transactionDate.toISOString().slice(0, 10)
+														: String(row.transactionDate).slice(0, 10)} />
+												<button type="submit" class="btn btn-primary btn-sm" disabled={submitting}>Създай и свържи</button>
 											</form>
 										</div>
 									{/if}
@@ -264,6 +372,8 @@
 								</a>
 							{:else if row.standaloneIncome}
 								<span style="color:var(--success);">Приход: {row.standaloneIncome.description}</span>
+							{:else if row.expense}
+								<span style="color:var(--danger);">Разход: {row.expense.category.name} · {row.expense.description}</span>
 							{:else}
 								<span class="muted">—</span>
 							{/if}

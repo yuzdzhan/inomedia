@@ -70,6 +70,15 @@ export const load: PageServerLoad = async ({ parent, params }) => {
 								amountCents: true,
 								incomeDate: true
 							}
+						},
+						expense: {
+							select: {
+								id: true,
+								description: true,
+								amountCents: true,
+								incurredDate: true,
+								category: { select: { name: true } }
+							}
 						}
 					}
 				}
@@ -103,6 +112,29 @@ export const load: PageServerLoad = async ({ parent, params }) => {
 			}
 		});
 
+		// Load active expense categories for inline expense creation
+		const expenseCategories = await db.expenseCategory.findMany({
+			where: { companyId: company.id, isActive: true },
+			orderBy: { name: 'asc' },
+			select: { id: true, name: true }
+		});
+
+		// Load unpaid expenses for expense matching — current month and past only
+		const now = new Date();
+		const endOfCurrentMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+		const unpaidExpenses = await db.expense.findMany({
+			where: { companyId: company.id, status: 'unpaid', incurredDate: { lte: endOfCurrentMonth } },
+			orderBy: { incurredDate: 'desc' },
+			select: {
+				id: true,
+				description: true,
+				amountCents: true,
+				incurredDate: true,
+				category: { select: { name: true } },
+				client: { select: { legalName: true } }
+			}
+		});
+
 		return {
 			statement: {
 				id: statement.id,
@@ -123,6 +155,15 @@ export const load: PageServerLoad = async ({ parent, params }) => {
 				clientName: inv.client.legalName,
 				remainingCents: inv.grossTotalCents - inv.paidTotalCents,
 				status: inv.status
+			})),
+			expenseCategories,
+			unpaidExpenses: unpaidExpenses.map((e) => ({
+				id: e.id,
+				description: e.description,
+				amountCents: e.amountCents,
+				incurredDate: e.incurredDate,
+				categoryName: e.category.name,
+				clientName: e.client?.legalName ?? null
 			})),
 			autoMatchCounts: {
 				matched: matchedRows.length,
@@ -416,6 +457,192 @@ export const actions: Actions = {
 		return { success: 'Редът е свързан с фактура.' };
 	},
 
+	createAndMatchExpense: async ({ request, locals, params, getClientAddress }) => {
+		if (!locals.user || !canManageStatements(locals.user.role)) {
+			return fail(403, { error: 'Нямате права за тази операция.' });
+		}
+
+		const company = await getCompanyOrRedirect();
+		const { statementId } = params;
+		const formData = await request.formData();
+		const rowId = String(formData.get('rowId') ?? '');
+		const categoryId = String(formData.get('categoryId') ?? '');
+		const description = String(formData.get('description') ?? '').trim();
+		const amountStr = String(formData.get('amount') ?? '');
+		const dateStr = String(formData.get('incurredDate') ?? '');
+
+		if (!categoryId || !description || !amountStr || !dateStr) {
+			return fail(422, { error: 'Попълнете всички полета за разхода.' });
+		}
+
+		const amountEur = parseFloat(amountStr);
+		if (isNaN(amountEur) || amountEur <= 0) {
+			return fail(422, { error: 'Невалидна сума.' });
+		}
+		const amountCents = Math.round(amountEur * 100);
+
+		const incurredDate = new Date(dateStr);
+		if (isNaN(incurredDate.getTime())) {
+			return fail(422, { error: 'Невалидна дата.' });
+		}
+
+		const row = await db.bankStatementRow.findFirst({
+			where: { id: rowId, statementId, statement: { companyId: company.id } },
+			select: { id: true, matchState: true, amountCents: true, transactionDate: true }
+		});
+		if (!row) return fail(404, { error: 'Редът не е намерен.' });
+		if (row.matchState !== 'unmatched' && row.matchState !== 'needs_review') {
+			return fail(409, { error: 'Само несъвпаднали редове могат да бъдат свързани с разход.' });
+		}
+
+		const category = await db.expenseCategory.findFirst({
+			where: { id: categoryId, companyId: company.id, isActive: true }
+		});
+		if (!category) return fail(400, { error: 'Невалидна категория.' });
+
+		const bankContainer = await db.moneyContainer.findUnique({
+			where: { companyId_containerType: { companyId: company.id, containerType: 'bank' } },
+			select: { id: true }
+		});
+		if (!bankContainer) {
+			return fail(404, { error: 'Банковият контейнер не е намерен. Моля, посетете Паричен поток първо.' });
+		}
+
+		const expense = await db.$transaction(async (tx) => {
+			const expense = await tx.expense.create({
+				data: {
+					companyId: company.id,
+					categoryId: category.id,
+					description,
+					amountCents,
+					incurredDate,
+					status: 'paid',
+					paidDate: row.transactionDate,
+					paidByUserId: locals.user!.id,
+					paidContainerId: bankContainer.id,
+					createdByUserId: locals.user!.id
+				}
+			});
+
+			await tx.ledgerEntry.create({
+				data: {
+					containerId: bankContainer.id,
+					entryType: 'expense_payment',
+					amountCents: -amountCents,
+					entryDate: row.transactionDate,
+					description,
+					expenseId: expense.id,
+					createdByUserId: locals.user!.id
+				}
+			});
+
+			await tx.bankStatementRow.update({
+				where: { id: rowId },
+				data: { matchState: 'auto_matched', expenseId: expense.id }
+			});
+
+			return expense;
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'statement_row_expense_created_and_matched',
+			entityType: 'bank_statement_row',
+			entityId: rowId,
+			newValueJson: { statementId, rowId, expenseId: expense.id, amountCents, categoryId },
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return { success: 'Разходът е създаден и свързан с реда.' };
+	},
+
+	matchExpense: async ({ request, locals, params, getClientAddress }) => {
+		if (!locals.user || !canManageStatements(locals.user.role)) {
+			return fail(403, { error: 'Нямате права за тази операция.' });
+		}
+
+		const company = await getCompanyOrRedirect();
+		const { statementId } = params;
+		const formData = await request.formData();
+		const rowId = String(formData.get('rowId') ?? '');
+		const expenseId = String(formData.get('expenseId') ?? '');
+
+		if (!expenseId) {
+			return fail(422, { error: 'Изберете разход за свързване.' });
+		}
+
+		const row = await db.bankStatementRow.findFirst({
+			where: { id: rowId, statementId, statement: { companyId: company.id } },
+			select: { id: true, matchState: true, amountCents: true, transactionDate: true }
+		});
+
+		if (!row) return fail(404, { error: 'Редът не е намерен.' });
+		if (row.matchState !== 'unmatched' && row.matchState !== 'needs_review') {
+			return fail(409, { error: 'Само несъвпаднали редове могат да бъдат свързани с разход.' });
+		}
+		if (row.amountCents >= 0) {
+			return fail(422, { error: 'Само дебитни редове могат да бъдат свързани с разход.' });
+		}
+
+		const expense = await db.expense.findFirst({
+			where: { id: expenseId, companyId: company.id, status: 'unpaid' },
+			select: { id: true, description: true, amountCents: true }
+		});
+
+		if (!expense) return fail(404, { error: 'Разходът не е намерен или вече е платен.' });
+
+		const bankContainer = await db.moneyContainer.findUnique({
+			where: { companyId_containerType: { companyId: company.id, containerType: 'bank' } },
+			select: { id: true }
+		});
+
+		if (!bankContainer) {
+			return fail(404, { error: 'Банковият контейнер не е намерен. Моля, посетете Паричен поток първо.' });
+		}
+
+		await db.$transaction(async (tx) => {
+			await tx.expense.update({
+				where: { id: expense.id },
+				data: {
+					status: 'paid',
+					paidDate: row.transactionDate,
+					paidByUserId: locals.user!.id,
+					paidContainerId: bankContainer.id
+				}
+			});
+
+			await tx.ledgerEntry.create({
+				data: {
+					containerId: bankContainer.id,
+					entryType: 'expense_payment',
+					amountCents: -expense.amountCents,
+					entryDate: row.transactionDate,
+					description: expense.description,
+					expenseId: expense.id,
+					createdByUserId: locals.user!.id
+				}
+			});
+
+			await tx.bankStatementRow.update({
+				where: { id: rowId },
+				data: { matchState: 'auto_matched', expenseId: expense.id }
+			});
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'statement_row_matched_expense',
+			entityType: 'bank_statement_row',
+			entityId: rowId,
+			newValueJson: { statementId, rowId, expenseId: expense.id, amountCents: expense.amountCents },
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return { success: 'Редът е свързан с разход.' };
+	},
+
 	unresolveRow: async ({ request, locals, params, getClientAddress }) => {
 		if (!locals.user || !canManageStatements(locals.user.role)) {
 			return fail(403, { error: 'Нямате права за тази операция.' });
@@ -438,6 +665,7 @@ export const actions: Actions = {
 				amountCents: true,
 				invoicePaymentId: true,
 				standaloneIncomeId: true,
+				expenseId: true,
 				invoicePayment: {
 					select: {
 						id: true,
@@ -529,22 +757,37 @@ export const actions: Actions = {
 					await tx.standaloneIncome.delete({ where: { id: income.id } });
 					await tx.bankStatementRow.update({
 						where: { id: rowId },
-						data: {
-							matchState: 'unmatched',
-							standaloneIncomeId: null
-						}
+						data: { matchState: 'unmatched', standaloneIncomeId: null }
 					});
 				});
 			} else {
-				// No income found, just reset the row
 				await db.bankStatementRow.update({
 					where: { id: rowId },
-					data: {
-						matchState: 'unmatched',
-						standaloneIncomeId: null
-					}
+					data: { matchState: 'unmatched', standaloneIncomeId: null }
 				});
 			}
+		} else if (row.expenseId) {
+			// Linked to an expense — revert it to unpaid and delete the ledger entry
+			const expense = await db.expense.findUnique({
+				where: { id: row.expenseId },
+				select: { id: true, ledgerEntry: { select: { id: true } } }
+			});
+
+			await db.$transaction(async (tx) => {
+				if (expense?.ledgerEntry) {
+					await tx.ledgerEntry.delete({ where: { id: expense.ledgerEntry.id } });
+				}
+				if (expense) {
+					await tx.expense.update({
+						where: { id: expense.id },
+						data: { status: 'unpaid', paidDate: null, paidByUserId: null, paidContainerId: null }
+					});
+				}
+				await tx.bankStatementRow.update({
+					where: { id: rowId },
+					data: { matchState: 'unmatched', expenseId: null }
+				});
+			});
 		} else {
 			// No linked entity — just reset the matchState (e.g. was irrelevant)
 			await db.bankStatementRow.update({

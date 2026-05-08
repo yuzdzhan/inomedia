@@ -5,7 +5,7 @@
 	let { data }: { data: PageData } = $props();
 
 	function formatCents(cents: number): string {
-		return (cents / 100).toFixed(2) + ' лв.';
+		return (cents / 100).toFixed(2) + ' EUR';
 	}
 
 

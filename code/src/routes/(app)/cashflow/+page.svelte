@@ -10,7 +10,7 @@
 	function formatCents(cents: number): string {
 		const sign = cents < 0 ? '-' : '';
 		const abs = Math.abs(cents);
-		return `${sign}${(abs / 100).toFixed(2)} лв.`;
+		return `${sign}${(abs / 100).toFixed(2)} EUR`;
 	}
 
 	const entryTypeLabels: Record<string, string> = {
@@ -131,7 +131,7 @@
 			</div>
 			<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
 				<div class="field">
-					<label class="label" for="income-amount">Сума (лв.)</label>
+					<label class="label" for="income-amount">Сума (EUR)</label>
 					<input class="input" id="income-amount" type="number" name="amount" required min="0.01" step="0.01" placeholder="0.00" style="font-family:var(--font-mono);" />
 				</div>
 				<div class="field">
@@ -187,7 +187,7 @@
 			</div>
 			<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
 				<div class="field">
-					<label class="label" for="mov-amount">Сума (лв.)</label>
+					<label class="label" for="mov-amount">Сума (EUR)</label>
 					<input class="input" id="mov-amount" type="number" name="amount" required min="0.01" step="0.01" placeholder="0.00" style="font-family:var(--font-mono);" />
 				</div>
 				<div class="field">
@@ -237,7 +237,7 @@
 			</div>
 			<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
 				<div class="field">
-					<label class="label" for="xfer-amount">Сума (лв.)</label>
+					<label class="label" for="xfer-amount">Сума (EUR)</label>
 					<input class="input" id="xfer-amount" type="number" name="amount" required min="0.01" step="0.01" placeholder="0.00" style="font-family:var(--font-mono);" />
 				</div>
 				<div class="field">

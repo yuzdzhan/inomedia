@@ -624,6 +624,7 @@ model Expense {
   paidContainerId     String?
   paidContainer       MoneyContainer? @relation("ExpensePaidFromContainer", fields: [paidContainerId], references: [id], onDelete: SetNull)
   ledgerEntry         LedgerEntry?    @relation("ExpenseLedgerEntry")
+  statementRows       BankStatementRow[]
   recurringTemplateId String?
   recurringTemplate   RecurringExpenseTemplate? @relation(fields: [recurringTemplateId], references: [id], onDelete: SetNull)
   isFromTemplate      Boolean         @default(false)
@@ -698,6 +699,8 @@ model BankStatementRow {
   invoicePayment      InvoicePayment?         @relation(fields: [invoicePaymentId], references: [id], onDelete: SetNull)
   standaloneIncomeId  String?
   standaloneIncome    StandaloneIncome?       @relation(fields: [standaloneIncomeId], references: [id], onDelete: SetNull)
+  expenseId           String?
+  expense             Expense?                @relation(fields: [expenseId], references: [id], onDelete: SetNull)
   reviewNote          String?
   createdAt           DateTime                @default(now())
   updatedAt           DateTime                @updatedAt

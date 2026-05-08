@@ -150,6 +150,47 @@
 		</div>
 	</div>
 
+	{#if (form as any)?.balanceError}
+		<div class="alert danger" style="margin-top:12px;">{(form as any).balanceError}</div>
+	{/if}
+
+	{#if data.moneyContainers.length > 0}
+		<div class="card" style="margin-top:16px;">
+			<div class="card-header">
+				<div>
+					<h3 class="card-title">Начални баланси</h3>
+					<div class="card-sub">Начален баланс за банковата сметка и касата — изходна точка за паричния поток.</div>
+				</div>
+			</div>
+			{#each data.moneyContainers as container}
+				<div style="padding:14px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:16px;">
+					<div style="flex:1;">
+						<div style="font-size:13px; font-weight:500;">{container.name}</div>
+						<div style="font-size:11px; color:var(--text-muted); margin-top:2px;">
+							{container.containerType === 'bank' ? 'Банкова сметка' : 'Каса'}
+						</div>
+					</div>
+					<form method="POST" action="?/updateContainerBalance" style="display:flex; gap:8px; align-items:center;">
+						<input type="hidden" name="containerId" value={container.id} />
+						<input
+							class="input"
+							name="openingBalance"
+							type="number"
+							step="0.01"
+							value={(container.openingBalanceCents / 100).toFixed(2)}
+							style="font-family:var(--font-mono); width:140px; text-align:right;"
+						/>
+						<span style="font-size:13px; color:var(--text-muted);">EUR</span>
+						<button type="submit" class="btn btn-secondary btn-sm">Запази</button>
+						{#if (form as any)?.balanceSuccess === container.id}
+							<span style="font-size:12px; color:var(--success);">✓</span>
+						{/if}
+					</form>
+				</div>
+			{/each}
+		</div>
+	{/if}
+
 	{#if data.internalClient}
 		<div class="card" style="margin-top:16px;">
 			<div class="card-header">
