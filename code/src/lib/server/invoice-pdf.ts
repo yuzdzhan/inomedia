@@ -75,11 +75,22 @@ function fmtMoney(cents: number): string {
 	return (cents / 100).toLocaleString('bg-BG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function fmtHours(hours: number): string {
+function currencySymbol(currency: string): string {
+	const symbols: Record<string, string> = { EUR: '€', USD: '$', GBP: '£', BGN: 'лв.' };
+	return symbols[currency] ?? currency;
+}
+
+function fmtQty(hours: number | null): string {
+	if (hours == null) return '1 бр.';
 	const totalMinutes = Math.round(hours * 60);
 	const hh = Math.floor(totalMinutes / 60);
 	const mm = totalMinutes % 60;
-	return mm === 0 ? `${hh}ч` : `${hh}ч ${mm}м`;
+	return mm === 0 ? `${hh} ч` : `${hh}ч ${mm}м`;
+}
+
+function taskUnitPriceCents(task: InvoicePdfTask): number {
+	if (task.hours != null && task.hours > 0) return Math.round(task.amountCents / task.hours);
+	return task.amountCents;
 }
 
 function partyFields(party: InvoicePdfParty): string {
@@ -87,7 +98,7 @@ function partyFields(party: InvoicePdfParty): string {
 	if (party.registrationNumber)
 		rows += `<span class="inv-fk">ЕИК/БУЛСТАТ:</span><span class="inv-fv inv-fv-num">${h(party.registrationNumber)}</span>`;
 	if (party.vatNumber)
-		rows += `<span class="inv-fk">ДДС №:</span><span class="inv-fv inv-fv-num">${h(party.vatNumber)}</span>`;
+		rows += `<span class="inv-fk">ИН по ДДС:</span><span class="inv-fv inv-fv-num">${h(party.vatNumber)}</span>`;
 	if (party.address)
 		rows += `<span class="inv-fk">Адрес:</span><span class="inv-fv">${hNl(party.address)}</span>`;
 	if (party.molName)
@@ -95,11 +106,10 @@ function partyFields(party: InvoicePdfParty): string {
 	return rows;
 }
 
-function buildInvoiceHtml(snap: InvoicePdfSnapshot): string {
+function buildInvoiceBody(snap: InvoicePdfSnapshot, label: string): string {
 	const { company, client, projectGroups, vatRateBasisPoints, currency } = snap;
 	const vatPct = (vatRateBasisPoints / 100).toFixed(0);
-	const paidCents = snap.paidTotalCents ?? 0;
-	const remainingCents = Math.max(0, snap.grossTotalCents - paidCents);
+	const sym = h(currencySymbol(currency));
 
 	const companyDetails = [
 		company.email ? `<p class="inv-company-detail">${h(company.email)}</p>` : '',
@@ -115,17 +125,18 @@ function buildInvoiceHtml(snap: InvoicePdfSnapshot): string {
 		<tr class="inv-tr ${bgClass}">
 			<td class="inv-td inv-td-num">${gi + 1}</td>
 			<td class="inv-td inv-td-desc inv-td-project">${h(group.projectName)}</td>
-			<td class="inv-td inv-td-vat">${vatPct}%</td>
-			<td class="inv-td inv-td-total">${fmtMoney(group.netAmountCents)}</td>
+			<td class="inv-td inv-td-uprice"></td>
+			<td class="inv-td inv-td-qty"></td>
+			<td class="inv-td inv-td-total">${fmtMoney(group.netAmountCents)} ${sym}</td>
 		</tr>`;
 		for (const task of group.tasks) {
-			const prefix = task.hours != null ? `${fmtHours(task.hours)} — ` : '';
 			tableRows += `
 		<tr class="inv-tr">
 			<td class="inv-td inv-td-num"></td>
-			<td class="inv-td inv-td-desc inv-td-task-desc">${h(prefix + task.description)}</td>
-			<td class="inv-td"></td>
-			<td class="inv-td inv-td-total inv-td-task-total">${fmtMoney(task.amountCents)}</td>
+			<td class="inv-td inv-td-desc inv-td-task-desc">${h(task.description)}</td>
+			<td class="inv-td inv-td-uprice inv-td-task-total">${fmtMoney(taskUnitPriceCents(task))} ${sym}</td>
+			<td class="inv-td inv-td-qty inv-td-task-total">${h(fmtQty(task.hours))}</td>
+			<td class="inv-td inv-td-total inv-td-task-total">${fmtMoney(task.amountCents)} ${sym}</td>
 		</tr>`;
 		}
 	}
@@ -138,8 +149,9 @@ function buildInvoiceHtml(snap: InvoicePdfSnapshot): string {
 		<tr class="inv-tr ${bgClass}">
 			<td class="inv-td inv-td-num">${idx + 1}</td>
 			<td class="inv-td inv-td-desc inv-td-project">${h(row.description)}</td>
-			<td class="inv-td inv-td-vat">${vatPct}%</td>
-			<td class="inv-td inv-td-total">${fmtMoney(row.amountCents)}</td>
+			<td class="inv-td inv-td-uprice">${fmtMoney(row.amountCents)} ${sym}</td>
+			<td class="inv-td inv-td-qty">1 бр.</td>
+			<td class="inv-td inv-td-total">${fmtMoney(row.amountCents)} ${sym}</td>
 		</tr>`;
 	}
 
@@ -153,8 +165,93 @@ function buildInvoiceHtml(snap: InvoicePdfSnapshot): string {
 	bankFields += `<div class="inv-bank-field"><span class="inv-bk">Получател</span><span class="inv-bv">${h(company.legalName)}</span></div>`;
 	bankFields += `<div class="inv-bank-field inv-bank-wide"><span class="inv-bk">Основание за плащане</span><span class="inv-bv inv-bv-ref">Плащане по фактура №${h(snap.invoiceNumber)}</span></div>`;
 
-	const remainingClass = remainingCents === 0 ? 'inv-sum-due inv-sum-due-zero' : 'inv-sum-due';
+	return `
+<header class="inv-header">
+	<div class="inv-header-left">
+		<h1 class="inv-company-name">${h(company.legalName)}</h1>
+		${companyDetails}
+	</div>
+	<div class="inv-header-right">
+		<h2 class="inv-doc-title">ФАКТУРА</h2>
+		<p class="inv-doc-subtitle">(${h(label)})</p>
+		<div class="inv-meta-grid">
+			<span class="inv-mk">Номер:</span>
+			<span class="inv-mv">${h(snap.invoiceNumber)}</span>
+			<span class="inv-mk">Дата:</span>
+			<span class="inv-mv">${h(snap.issueDate)}</span>
+			<span class="inv-mk">Падеж:</span>
+			<span class="inv-mv">${snap.dueDate ? h(snap.dueDate) : '—'}</span>
+		</div>
+	</div>
+</header>
 
+<div class="inv-legal">
+	<div>
+		<h3 class="inv-section-title">ДОСТАВЧИК</h3>
+		<div class="inv-fields">${partyFields(company)}</div>
+	</div>
+	<div>
+		<h3 class="inv-section-title">КЛИЕНТ</h3>
+		<div class="inv-fields">${partyFields(client)}</div>
+	</div>
+</div>
+
+<div class="inv-table-wrap">
+	<table class="inv-table">
+		<thead>
+			<tr>
+				<th class="inv-th inv-th-num">№</th>
+				<th class="inv-th">Описание</th>
+				<th class="inv-th inv-th-uprice">Единична цена</th>
+				<th class="inv-th inv-th-qty">Кол-во</th>
+				<th class="inv-th inv-th-total">Цена</th>
+			</tr>
+		</thead>
+		<tbody>${tableRows}</tbody>
+	</table>
+</div>
+
+<div class="inv-summary-wrap">
+	<div class="inv-summary">
+		<div class="inv-sum-row inv-sum-sep">
+			<span class="inv-sum-label">Данъчна основа:</span>
+			<span class="inv-sum-val">${fmtMoney(snap.netTotalCents)} ${sym}</span>
+		</div>
+		<div class="inv-sum-row inv-sum-sep">
+			<span class="inv-sum-label">ДДС ${vatPct}%:</span>
+			<span class="inv-sum-val">${fmtMoney(snap.vatTotalCents)} ${sym}</span>
+		</div>
+		<div class="inv-sum-grand">
+			<span class="inv-sum-grand-label">Общо с ДДС:</span>
+			<span class="inv-sum-grand-val">${fmtMoney(snap.grossTotalCents)} ${sym}</span>
+		</div>
+	</div>
+</div>
+
+<footer class="inv-footer">
+	<div class="inv-bank">
+		<div class="inv-bank-head">
+			<h3 class="inv-bank-title">
+				<svg class="inv-bank-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+					<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17.93V18c0-.55-.45-1-1-1s-1 .45-1 1v1.93C7.06 19.44 4.56 16.94 4.07 14H6c.55 0 1-.45 1-1s-.45-1-1-1H4.07C4.56 8.06 7.06 5.56 10 5.07V7c0 .55.45 1 1 1s1-.45 1-1V5.07C16.94 5.56 19.44 8.06 19.93 11H18c-.55 0-1 .45-1 1s.45 1 1 1h1.93c-.49 2.94-2.99 5.44-5.93 5.93z"/>
+				</svg>
+				ДАННИ ЗА ПЛАЩАНЕ
+			</h3>
+			<span class="inv-bank-subtitle">Платежно нареждане</span>
+		</div>
+		<div class="inv-bank-grid">${bankFields}</div>
+		<div class="inv-bank-footer">
+			<p>Моля използвайте посоченото основание за автоматична обработка.</p>
+			${snap.dueDate ? `<p>Краен срок: ${h(snap.dueDate)}</p>` : ''}
+		</div>
+	</div>
+	<div class="inv-page-num">Страница 1 от 1</div>
+</footer>`;
+}
+
+function buildInvoiceHtml(snap: InvoicePdfSnapshot): string {
+	const original = buildInvoiceBody(snap, 'ОРИГИНАЛ');
+	const copy = buildInvoiceBody(snap, 'КОПИЕ');
 	return `<!DOCTYPE html>
 <html lang="bg">
 <head>
@@ -163,6 +260,8 @@ function buildInvoiceHtml(snap: InvoicePdfSnapshot): string {
 <style>
 *, *::before, *::after { box-sizing: border-box; }
 body { margin: 0; padding: 0; font-family: 'Open Sans', sans-serif; color: #1d1b20; background: #fff; }
+
+.inv-copy { page-break-after: always; }
 
 .inv-header {
 	display: flex; justify-content: space-between; align-items: flex-start;
@@ -208,17 +307,19 @@ body { margin: 0; padding: 0; font-family: 'Open Sans', sans-serif; color: #1d1b
 	color: #494551; padding: 8px; text-align: left;
 	border-top: 1px solid #E5E7EB; border-bottom: 1px solid #E5E7EB;
 }
-.inv-th-num { width: 36px; text-align: center; }
-.inv-th-vat { width: 64px; text-align: right; }
-.inv-th-total { width: 110px; text-align: right; }
+.inv-th-num    { width: 36px; text-align: center; }
+.inv-th-uprice { width: 100px; text-align: right; }
+.inv-th-qty    { width: 80px; text-align: right; }
+.inv-th-total  { width: 100px; text-align: right; }
 .inv-tr { border-bottom: 1px solid #ece6ee; }
-.inv-tr-alt { background: #f8f2fa; }
+.inv-tr-alt     { background: #f8f2fa; }
 .inv-tr-surface { background: #ece6ee; }
 .inv-td { font-size: 12px; line-height: 18px; color: #1d1b20; padding: 8px; vertical-align: top; }
-.inv-td-num { text-align: center; }
-.inv-td-vat { text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.inv-td-total { text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.inv-td-project { font-weight: 600; }
+.inv-td-num    { text-align: center; }
+.inv-td-uprice { text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.inv-td-qty    { text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.inv-td-total  { text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.inv-td-project   { font-weight: 600; }
 .inv-td-task-desc { font-size: 11px; color: #494551; padding-top: 4px; padding-bottom: 4px; padding-left: 20px; }
 .inv-td-task-total { font-size: 11px; font-weight: 400; color: #494551; padding-top: 4px; padding-bottom: 4px; }
 
@@ -226,9 +327,8 @@ body { margin: 0; padding: 0; font-family: 'Open Sans', sans-serif; color: #1d1b
 .inv-summary { width: 300px; }
 .inv-sum-row { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 0; }
 .inv-sum-sep { border-bottom: 1px solid #E5E7EB; }
-.inv-sum-muted { color: #494551; }
 .inv-sum-label { font-size: 12px; color: #494551; }
-.inv-sum-val { font-size: 13px; font-weight: 600; color: #1d1b20; font-variant-numeric: tabular-nums; }
+.inv-sum-val   { font-size: 13px; font-weight: 600; color: #1d1b20; font-variant-numeric: tabular-nums; }
 .inv-sum-grand { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 0; margin-top: 4px; }
 .inv-sum-grand-label {
 	font-family: 'Montserrat', sans-serif; font-size: 18px; font-weight: 600;
@@ -238,14 +338,6 @@ body { margin: 0; padding: 0; font-family: 'Open Sans', sans-serif; color: #1d1b
 	font-family: 'Montserrat', sans-serif; font-size: 18px; font-weight: 600;
 	letter-spacing: -0.01em; color: #334155; font-variant-numeric: tabular-nums;
 }
-.inv-sum-sm-label { font-size: 10px; color: #494551; }
-.inv-sum-sm-val { font-size: 13px; font-weight: 600; color: #1d1b20; font-variant-numeric: tabular-nums; }
-.inv-sum-due {
-	display: flex; justify-content: space-between; align-items: baseline;
-	padding: 4px 8px; background: #ece6ee; border-radius: 2px; margin-top: 4px;
-	font-family: 'Montserrat', sans-serif; font-size: 14px; font-weight: 600; color: #ba1a1a;
-}
-.inv-sum-due.inv-sum-due-zero { color: #15803d; background: #dcfce7; }
 
 .inv-footer { padding-top: 24px; border-top: 1px solid #E5E7EB; }
 .inv-bank {
@@ -276,96 +368,8 @@ body { margin: 0; padding: 0; font-family: 'Open Sans', sans-serif; color: #1d1b
 </style>
 </head>
 <body>
-
-<header class="inv-header">
-	<div class="inv-header-left">
-		<h1 class="inv-company-name">${h(company.legalName)}</h1>
-		${companyDetails}
-	</div>
-	<div class="inv-header-right">
-		<h2 class="inv-doc-title">ФАКТУРА</h2>
-		<p class="inv-doc-subtitle">(ОРИГИНАЛ)</p>
-		<div class="inv-meta-grid">
-			<span class="inv-mk">Номер:</span>
-			<span class="inv-mv">${h(snap.invoiceNumber)}</span>
-			<span class="inv-mk">Дата:</span>
-			<span class="inv-mv">${h(snap.issueDate)}</span>
-			<span class="inv-mk">Падеж:</span>
-			<span class="inv-mv">${snap.dueDate ? h(snap.dueDate) : '—'}</span>
-		</div>
-	</div>
-</header>
-
-<div class="inv-legal">
-	<div>
-		<h3 class="inv-section-title">ДОСТАВЧИК</h3>
-		<div class="inv-fields">${partyFields(company)}</div>
-	</div>
-	<div>
-		<h3 class="inv-section-title">КЛИЕНТ</h3>
-		<div class="inv-fields">${partyFields(client)}</div>
-	</div>
-</div>
-
-<div class="inv-table-wrap">
-	<table class="inv-table">
-		<thead>
-			<tr>
-				<th class="inv-th inv-th-num">№</th>
-				<th class="inv-th">Описание</th>
-				<th class="inv-th inv-th-vat">VAT %</th>
-				<th class="inv-th inv-th-total">Сума (${h(currency)})</th>
-			</tr>
-		</thead>
-		<tbody>${tableRows}</tbody>
-	</table>
-</div>
-
-<div class="inv-summary-wrap">
-	<div class="inv-summary">
-		<div class="inv-sum-row inv-sum-sep">
-			<span class="inv-sum-label">Сума без ДДС:</span>
-			<span class="inv-sum-val">${fmtMoney(snap.netTotalCents)} ${h(currency)}</span>
-		</div>
-		<div class="inv-sum-row inv-sum-sep">
-			<span class="inv-sum-label">ДДС ${vatPct}%:</span>
-			<span class="inv-sum-val">${fmtMoney(snap.vatTotalCents)} ${h(currency)}</span>
-		</div>
-		<div class="inv-sum-grand">
-			<span class="inv-sum-grand-label">Общо с ДДС:</span>
-			<span class="inv-sum-grand-val">${fmtMoney(snap.grossTotalCents)} ${h(currency)}</span>
-		</div>
-		<div class="inv-sum-row inv-sum-muted">
-			<span class="inv-sum-sm-label">Платено:</span>
-			<span class="inv-sum-sm-val">${fmtMoney(paidCents)} ${h(currency)}</span>
-		</div>
-		<div class="${remainingClass}">
-			<span>Остатък за плащане:</span>
-			<span>${fmtMoney(remainingCents)} ${h(currency)}</span>
-		</div>
-	</div>
-</div>
-
-<footer class="inv-footer">
-	<div class="inv-bank">
-		<div class="inv-bank-head">
-			<h3 class="inv-bank-title">
-				<svg class="inv-bank-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-					<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17.93V18c0-.55-.45-1-1-1s-1 .45-1 1v1.93C7.06 19.44 4.56 16.94 4.07 14H6c.55 0 1-.45 1-1s-.45-1-1-1H4.07C4.56 8.06 7.06 5.56 10 5.07V7c0 .55.45 1 1 1s1-.45 1-1V5.07C16.94 5.56 19.44 8.06 19.93 11H18c-.55 0-1 .45-1 1s.45 1 1 1h1.93c-.49 2.94-2.99 5.44-5.93 5.93z"/>
-				</svg>
-				ДАННИ ЗА ПЛАЩАНЕ
-			</h3>
-			<span class="inv-bank-subtitle">Платежно нареждане</span>
-		</div>
-		<div class="inv-bank-grid">${bankFields}</div>
-		<div class="inv-bank-footer">
-			<p>Please use the exact reference provided to ensure automatic processing.</p>
-			${snap.dueDate ? `<p>Deadline: ${h(snap.dueDate)}</p>` : ''}
-		</div>
-	</div>
-	<div class="inv-page-num">Page 1 of 1</div>
-</footer>
-
+<div class="inv-copy" style="padding: 20mm 15mm;">${original}</div>
+<div style="padding: 20mm 15mm;">${copy}</div>
 </body>
 </html>`;
 }
@@ -379,9 +383,8 @@ export async function generateInvoicePdf(snapshot: InvoicePdfSnapshot): Promise<
 		const pdfBuffer = await page.pdf({
 			format: 'A4',
 			printBackground: true,
-			margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' }
+			margin: { top: '0', bottom: '0', left: '0', right: '0' }
 		});
-		// Copy into Uint8Array<ArrayBuffer> to satisfy BodyInit / Prisma bytes type
 		const result = new Uint8Array(new ArrayBuffer(pdfBuffer.length));
 		result.set(pdfBuffer);
 		return result;
