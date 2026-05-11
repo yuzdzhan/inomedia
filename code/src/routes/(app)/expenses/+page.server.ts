@@ -42,7 +42,8 @@ const expenseSchema = z.object({
 		.min(1, 'Сумата трябва да е положителна.'),
 	incurredDate: z.string().min(1, 'Датата е задължителна.'),
 	clientId: z.string().optional(),
-	projectId: z.string().optional()
+	projectId: z.string().optional(),
+	billableToInvoice: z.boolean().default(false)
 });
 
 const categorySchema = z.object({
@@ -278,7 +279,8 @@ export const actions: Actions = {
 			amountCents: String(formData.get('amountCents') ?? ''),
 			incurredDate: String(formData.get('incurredDate') ?? ''),
 			clientId: String(formData.get('clientId') ?? '') || undefined,
-			projectId: String(formData.get('projectId') ?? '') || undefined
+			projectId: String(formData.get('projectId') ?? '') || undefined,
+			billableToInvoice: formData.get('billableToInvoice') === 'on'
 		};
 
 		const parsed = expenseSchema.safeParse(raw);
@@ -337,6 +339,7 @@ export const actions: Actions = {
 				description: data.description,
 				amountCents: data.amountCents,
 				incurredDate: new Date(data.incurredDate),
+				billableToInvoice: data.clientId ? data.billableToInvoice : false,
 				createdByUserId: locals.user.id
 			}
 		});
@@ -374,7 +377,8 @@ export const actions: Actions = {
 			amountCents: String(formData.get('amountCents') ?? ''),
 			incurredDate: String(formData.get('incurredDate') ?? ''),
 			clientId: String(formData.get('clientId') ?? '') || undefined,
-			projectId: String(formData.get('projectId') ?? '') || undefined
+			projectId: String(formData.get('projectId') ?? '') || undefined,
+			billableToInvoice: formData.get('billableToInvoice') === 'on'
 		};
 
 		const parsed = expenseSchema.safeParse(raw);
@@ -435,7 +439,8 @@ export const actions: Actions = {
 				projectId: data.projectId ?? null,
 				description: data.description,
 				amountCents: data.amountCents,
-				incurredDate: new Date(data.incurredDate)
+				incurredDate: new Date(data.incurredDate),
+				billableToInvoice: data.clientId ? data.billableToInvoice : false
 			}
 		});
 

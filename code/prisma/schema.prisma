@@ -538,6 +538,7 @@ model Invoice {
   createdByUserId       String
   createdByUser         User              @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
   taskSelections        InvoiceTaskSelection[]
+  customRows            InvoiceCustomRow[]
   payments              InvoicePayment[]
   createdAt             DateTime          @default(now())
   updatedAt             DateTime          @updatedAt
@@ -581,6 +582,22 @@ model InvoiceTaskSelection {
   @@unique([invoiceId, taskId])
   @@index([taskId, createdAt])
   @@map("invoice_task_selection")
+}
+
+model InvoiceCustomRow {
+  id              String   @id @default(cuid())
+  invoiceId       String
+  invoice         Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  description     String
+  amountCents     Int
+  sortOrder       Int      @default(0)
+  sourceExpenseId String?  @unique
+  sourceExpense   Expense? @relation("ExpenseCustomRow", fields: [sourceExpenseId], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([invoiceId, sortOrder])
+  @@map("invoice_custom_row")
 }
 
 model UserRateHistory {
@@ -650,7 +667,10 @@ model Expense {
   recurringTemplateId String?
   recurringTemplate   RecurringExpenseTemplate? @relation(fields: [recurringTemplateId], references: [id], onDelete: SetNull)
   isFromTemplate      Boolean         @default(false)
+  billableToInvoice   Boolean         @default(false)
+  invoicedAt          DateTime?
   attachments         ExpenseAttachment[]
+  customRow           InvoiceCustomRow? @relation("ExpenseCustomRow")
   createdByUserId     String
   createdByUser       User            @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   createdAt           DateTime        @default(now())

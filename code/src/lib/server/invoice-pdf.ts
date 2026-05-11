@@ -35,6 +35,7 @@ export type InvoicePdfSnapshot = {
 	company: InvoicePdfParty;
 	client: InvoicePdfParty;
 	projectGroups: InvoicePdfProjectGroup[];
+	customRows?: Array<{ description: string; amountCents: number }>;
 	netTotalCents: number;
 	vatTotalCents: number;
 	grossTotalCents: number;
@@ -127,6 +128,19 @@ function buildInvoiceHtml(snap: InvoicePdfSnapshot): string {
 			<td class="inv-td inv-td-total inv-td-task-total">${fmtMoney(task.amountCents)}</td>
 		</tr>`;
 		}
+	}
+	const customRows = snap.customRows ?? [];
+	for (let ci = 0; ci < customRows.length; ci++) {
+		const row = customRows[ci];
+		const idx = projectGroups.length + ci;
+		const bgClass = idx % 2 === 0 ? 'inv-tr-surface' : 'inv-tr-alt';
+		tableRows += `
+		<tr class="inv-tr ${bgClass}">
+			<td class="inv-td inv-td-num">${idx + 1}</td>
+			<td class="inv-td inv-td-desc inv-td-project">${h(row.description)}</td>
+			<td class="inv-td inv-td-vat">${vatPct}%</td>
+			<td class="inv-td inv-td-total">${fmtMoney(row.amountCents)}</td>
+		</tr>`;
 	}
 
 	let bankFields = '';

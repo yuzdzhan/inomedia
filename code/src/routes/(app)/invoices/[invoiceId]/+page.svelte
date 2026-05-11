@@ -42,6 +42,7 @@
 				}
 				return Array.from(map.entries()).map(([projectName, d]) => ({ projectName, tasks: d.tasks, netAmountCents: d.netAmountCents }));
 			})(),
+			customRows: invoice.customRows.map((r) => ({ description: r.description, amountCents: r.amountCents })),
 			netTotalCents: invoice.netTotalCents,
 			vatTotalCents: invoice.vatTotalCents,
 			grossTotalCents: invoice.grossTotalCents,
@@ -172,6 +173,9 @@
 			</div>
 		</div>
 
+		<!-- Task selections -->
+		{#if invoice.taskSelections.length > 0}
+		<div class="section-label">Работа по задачи</div>
 		<div style="border:1px solid var(--border); border-radius:var(--r-md); overflow:hidden; margin-bottom:16px;">
 			{#each invoice.taskSelections as sel, idx}
 				<div style="padding:10px 14px; border-top:{idx > 0 ? '1px solid var(--border-soft)' : 'none'};">
@@ -187,8 +191,31 @@
 				</div>
 			{/each}
 		</div>
+		{/if}
 
-		<div class="row gap-2">
+		<!-- Custom rows -->
+		{#if invoice.customRows.length > 0}
+		<div class="section-label">Допълнителни редове</div>
+		<div style="border:1px solid var(--border); border-radius:var(--r-md); overflow:hidden; margin-bottom:16px;">
+			{#each invoice.customRows as row, idx}
+				<div style="padding:10px 14px; border-top:{idx > 0 ? '1px solid var(--border-soft)' : 'none'}; display:grid; grid-template-columns:1fr 120px auto; gap:10px; align-items:start;">
+					<div class="field" style="margin:0;">
+						<label class="label" for="crdesc-{row.id}" style="font-size:10px;">Описание</label>
+						<textarea class="input textarea" id="crdesc-{row.id}" name="customRowDesc:{row.id}" rows="2" style="font-size:12px; resize:none;">{row.description}</textarea>
+					</div>
+					<div class="field" style="margin:0;">
+						<label class="label" for="cramount-{row.id}" style="font-size:10px;">Сума ({company.currency})</label>
+						<input class="input" id="cramount-{row.id}" name="customRowAmount:{row.id}" type="number" min="0" step="0.01" value={(row.amountCents / 100).toFixed(2)} style="font-size:12px;" />
+					</div>
+					<div style="padding-top:18px;">
+						<!-- remove button is a separate form so it doesn't interfere with save -->
+					</div>
+				</div>
+			{/each}
+		</div>
+		{/if}
+
+		<div class="row gap-2" style="margin-bottom:16px;">
 			<button class="btn btn-primary btn-sm" type="submit" formaction="?/issueDraft">
 				<Icon name="check" size={13} />Издай фактура
 			</button>
@@ -201,6 +228,73 @@
 			</a>
 		</div>
 	</form>
+
+	<!-- Remove custom row forms (outside main form) -->
+	{#each invoice.customRows as row}
+		<form method="POST" action="?/removeCustomRow" style="display:contents;">
+			<input type="hidden" name="rowId" value={row.id} />
+			<!-- We use a positioned button to align with each row - rendered via JS -->
+		</form>
+	{/each}
+
+	<!-- Custom rows: remove buttons and add form -->
+	<div style="padding:0 16px 16px;">
+		{#if invoice.customRows.length > 0}
+			<div style="margin-bottom:12px;">
+				{#each invoice.customRows as row}
+					<form method="POST" action="?/removeCustomRow" style="display:inline; margin-right:8px;">
+						<input type="hidden" name="rowId" value={row.id} />
+						<button type="submit" class="btn btn-ghost btn-sm" style="font-size:11px; color:var(--text-muted);">
+							<Icon name="trash" size={11} />Премахни «{row.description.length > 30 ? row.description.slice(0, 30) + '…' : row.description}»
+						</button>
+					</form>
+				{/each}
+			</div>
+		{/if}
+
+		<!-- Add custom row form -->
+		<details style="margin-bottom:8px;">
+			<summary class="btn btn-ghost btn-sm" style="cursor:pointer; list-style:none; display:inline-flex; align-items:center; gap:6px;">
+				<Icon name="plus" size={13} />Добави ред
+			</summary>
+			<div style="margin-top:10px; padding:12px; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md);">
+				{#if (form as any)?.customRowError}
+					<div class="alert danger" style="margin-bottom:8px;">{(form as any).customRowError}</div>
+				{/if}
+				<form method="POST" action="?/addCustomRow">
+					<div style="display:grid; grid-template-columns:1fr 140px auto; gap:10px; align-items:end;">
+						<div class="field" style="margin:0;">
+							<label class="label" for="newRowDesc">Описание</label>
+							<input class="input" id="newRowDesc" name="description" type="text" placeholder="напр. Лиценз за Adobe CC" required />
+						</div>
+						<div class="field" style="margin:0;">
+							<label class="label" for="newRowAmount">Сума ({company.currency})</label>
+							<input class="input" id="newRowAmount" name="amountCents" type="number" min="0" step="0.01" placeholder="0.00" required />
+						</div>
+						<button type="submit" class="btn btn-secondary btn-sm">Добави</button>
+					</div>
+				</form>
+			</div>
+		</details>
+
+		<!-- Billable expenses -->
+		{#if data.billableExpenses.length > 0}
+			<div style="margin-top:12px;">
+				<div class="section-label" style="margin-bottom:8px;">Таксуеми разходи на клиента</div>
+				{#each data.billableExpenses as exp}
+					<form method="POST" action="?/pullBillableExpense" style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+						<input type="hidden" name="expenseId" value={exp.id} />
+						<span style="flex:1; font-size:13px;">{exp.description}</span>
+						<span class="amount muted" style="font-size:12px;">{fmtDate(exp.incurredDate)}</span>
+						<span class="amount" style="font-size:13px; font-weight:500;">{fmtMoney(exp.amountCents)} {company.currency}</span>
+						<button type="submit" class="btn btn-secondary btn-sm">
+							<Icon name="plus" size={12} />Добави
+						</button>
+					</form>
+				{/each}
+			</div>
+		{/if}
+	</div>
 </div>
 {/if}
 
@@ -310,6 +404,15 @@
 								<td class="inv-td inv-td-total inv-td-task-total">{fmtMoney(task.amountCents)}</td>
 							</tr>
 						{/each}
+					{/each}
+					{#each (view().customRows ?? []) as row, ci}
+						{@const idx = view().projectGroups.length + ci}
+						<tr class="inv-tr inv-tr-project {idx % 2 === 0 ? 'inv-tr-surface' : 'inv-tr-alt'}">
+							<td class="inv-td inv-td-num">{idx + 1}</td>
+							<td class="inv-td inv-td-desc inv-td-project">{row.description}</td>
+							<td class="inv-td inv-td-vat">{(view().vatRateBasisPoints / 100).toFixed(0)}%</td>
+							<td class="inv-td inv-td-total">{fmtMoney(row.amountCents)}</td>
+						</tr>
 					{/each}
 				</tbody>
 			</table>
@@ -812,6 +915,16 @@
 
 	.draft-panel { max-width: 820px; margin-bottom: 20px; }
 	.draft-panel .textarea { height: auto; padding: 6px 10px; min-height: 52px; }
+
+	.section-label {
+		font-size: 11px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--text-muted);
+		margin-bottom: 8px;
+		font-family: var(--font-mono);
+	}
 
 	@media print {
 		:global(.sidebar),

@@ -207,6 +207,10 @@ async function getDraftForUpdate(invoiceId: string) {
 						}
 					}
 				}
+			},
+			customRows: {
+				orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+				select: { id: true, description: true, amountCents: true }
 			}
 		}
 	});
@@ -399,7 +403,9 @@ export const actions: Actions = {
 				selection.description || buildDefaultInvoiceLineDescription(selection.task)
 			)
 		}));
-		const netTotalCents = draft.taskSelections.reduce((sum, selection) => sum + selectionAmount(selection), 0);
+		const taskTotal = draft.taskSelections.reduce((sum, selection) => sum + selectionAmount(selection), 0);
+		const customTotal = draft.customRows.reduce((sum, r) => sum + r.amountCents, 0);
+		const netTotalCents = taskTotal + customTotal;
 		const vatTotalCents = Math.round((netTotalCents * draft.vatRateBasisPoints) / 10000);
 		const grossTotalCents = netTotalCents + vatTotalCents;
 
@@ -521,6 +527,9 @@ export const actions: Actions = {
 		);
 		const snapshotByTaskId = new Map(snapshots.map((snapshot) => [snapshot.taskId, snapshot]));
 		const totals = summarizeDraftSelections(snapshots, draft.vatRateBasisPoints);
+		const customTotal = draft.customRows.reduce((sum, r) => sum + r.amountCents, 0);
+		const netTotalCents = totals.netTotalCents + customTotal;
+		const vatTotalCents = Math.round((netTotalCents * draft.vatRateBasisPoints) / 10000);
 
 		await db.$transaction(async (tx) => {
 			for (const selection of draft.taskSelections) {
@@ -551,9 +560,9 @@ export const actions: Actions = {
 					),
 					servicePeriodFrom: draft.servicePeriodFrom ?? totals.servicePeriodFrom,
 					servicePeriodTo: draft.servicePeriodTo ?? totals.servicePeriodTo,
-					netTotalCents: totals.netTotalCents,
-					vatTotalCents: totals.vatTotalCents,
-					grossTotalCents: totals.grossTotalCents,
+					netTotalCents,
+					vatTotalCents,
+					grossTotalCents: netTotalCents + vatTotalCents,
 					isStaleDraft: false,
 					lastUpdatedAt: new Date()
 				}

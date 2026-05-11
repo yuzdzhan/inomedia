@@ -54,6 +54,7 @@ export const load: PageServerLoad = async ({ params, parent }) => {
 				where: { id: params.invoiceId },
 				select: {
 					id: true,
+					clientId: true,
 					status: true,
 					invoiceNumber: true,
 					issueDate: true,
@@ -100,6 +101,10 @@ export const load: PageServerLoad = async ({ params, parent }) => {
 							}
 						}
 					},
+					customRows: {
+						orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+						select: { id: true, description: true, amountCents: true, sortOrder: true, sourceExpenseId: true }
+					},
 					payments: {
 						orderBy: [{ paymentDate: 'asc' }],
 						select: {
@@ -141,7 +146,20 @@ export const load: PageServerLoad = async ({ params, parent }) => {
 
 		const snapshot = (invoice.issuedSnapshotJson ?? null) as InvoicePdfSnapshot | null;
 
-		return { invoice, company, snapshot };
+		// Load unbilled billable expenses for this client (only useful for drafts)
+		const billableExpenses = invoice.status === 'draft'
+			? await db.expense.findMany({
+					where: {
+						clientId: invoice.clientId,
+						billableToInvoice: true,
+						invoicedAt: null
+					},
+					orderBy: [{ incurredDate: 'asc' }],
+					select: { id: true, description: true, amountCents: true, incurredDate: true }
+				})
+			: [];
+
+		return { invoice, company, snapshot, billableExpenses };
 	} catch (e) {
 		if (isRedirect(e) || isHttpError(e)) throw e;
 		console.error(e);
@@ -166,6 +184,10 @@ export const actions: Actions = {
 				client: { select: { defaultPaymentTermDays: true } },
 				taskSelections: {
 					select: { id: true, description: true, task: { select: { title: true, billingType: true } }, hourlyUninvoicedValueCents: true, flatFeeValueCents: true }
+				},
+				customRows: {
+					orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+					select: { id: true, description: true, amountCents: true }
 				}
 			}
 		});
@@ -190,12 +212,25 @@ export const actions: Actions = {
 			)
 		}));
 
-		const netTotalCents = draft.taskSelections.reduce((s, sel) => s + selectionAmount(sel), 0);
+		const customRowUpdates = draft.customRows.map((row) => {
+			const rawDesc = String(formData.get(`customRowDesc:${row.id}`) ?? '');
+			const rawAmount = String(formData.get(`customRowAmount:${row.id}`) ?? '');
+			const description = normalizeDescription(rawDesc, row.description);
+			const amountCents = rawAmount ? Math.round(parseFloat(rawAmount) * 100) : row.amountCents;
+			return { id: row.id, description, amountCents: isNaN(amountCents) ? row.amountCents : Math.max(0, amountCents) };
+		});
+
+		const taskTotal = draft.taskSelections.reduce((s, sel) => s + selectionAmount(sel), 0);
+		const customTotal = customRowUpdates.reduce((s, r) => s + r.amountCents, 0);
+		const netTotalCents = taskTotal + customTotal;
 		const vatTotalCents = Math.round((netTotalCents * draft.vatRateBasisPoints) / 10000);
 
 		await db.$transaction(async (tx) => {
 			for (const sel of selectionUpdates) {
 				await tx.invoiceTaskSelection.update({ where: { id: sel.id }, data: { description: sel.description } });
+			}
+			for (const row of customRowUpdates) {
+				await tx.invoiceCustomRow.update({ where: { id: row.id }, data: { description: row.description, amountCents: row.amountCents } });
 			}
 			await tx.invoice.update({
 				where: { id: draft.id },
@@ -235,6 +270,9 @@ export const actions: Actions = {
 							}
 						}
 					}
+				},
+				customRows: {
+					select: { id: true, amountCents: true }
 				}
 			}
 		});
@@ -248,6 +286,11 @@ export const actions: Actions = {
 		const snapshotByTaskId = new Map(snapshots.map((s) => [s.taskId, s]));
 		const totals = summarizeDraftSelections(snapshots, draft.vatRateBasisPoints);
 
+		// Add fixed custom row amounts to totals
+		const customTotal = draft.customRows.reduce((s, r) => s + r.amountCents, 0);
+		const netTotalCents = totals.netTotalCents + customTotal;
+		const vatTotalCents = Math.round((netTotalCents * draft.vatRateBasisPoints) / 10000);
+
 		await db.$transaction(async (tx) => {
 			for (const sel of draft.taskSelections) {
 				const snap = snapshotByTaskId.get(sel.taskId);
@@ -259,13 +302,13 @@ export const actions: Actions = {
 			}
 			await tx.invoice.update({
 				where: { id: draft.id },
-				data: { dueDate: resolveDraftDueDate(draft.dueDate, draft.client.defaultPaymentTermDays, company.defaultPaymentTermDays), servicePeriodFrom: draft.servicePeriodFrom ?? totals.servicePeriodFrom, servicePeriodTo: draft.servicePeriodTo ?? totals.servicePeriodTo, netTotalCents: totals.netTotalCents, vatTotalCents: totals.vatTotalCents, grossTotalCents: totals.grossTotalCents, isStaleDraft: false, lastUpdatedAt: new Date() }
+				data: { dueDate: resolveDraftDueDate(draft.dueDate, draft.client.defaultPaymentTermDays, company.defaultPaymentTermDays), servicePeriodFrom: draft.servicePeriodFrom ?? totals.servicePeriodFrom, servicePeriodTo: draft.servicePeriodTo ?? totals.servicePeriodTo, netTotalCents, vatTotalCents, grossTotalCents: netTotalCents + vatTotalCents, isStaleDraft: false, lastUpdatedAt: new Date() }
 			});
 		});
 
 		await logAuditEvent({
 			actorUserId: locals.user.id, eventType: 'invoice_draft_recalculated', entityType: 'invoice', entityId: draft.id,
-			newValueJson: { netTotalCents: totals.netTotalCents, grossTotalCents: totals.grossTotalCents },
+			newValueJson: { netTotalCents, grossTotalCents: netTotalCents + vatTotalCents },
 			ipAddress: getClientAddress(), userAgent: request.headers.get('user-agent') ?? undefined
 		});
 
@@ -293,6 +336,10 @@ export const actions: Actions = {
 							select: { id: true, title: true, billingType: true, taskList: { include: { project: { select: { name: true } } } } }
 						}
 					}
+				},
+				customRows: {
+					orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+					select: { id: true, description: true, amountCents: true, sourceExpenseId: true }
 				}
 			}
 		});
@@ -322,8 +369,23 @@ export const actions: Actions = {
 			task: sel.task
 		}));
 
+		const updatedCustomRows = draft.customRows.map((row) => {
+			const rawDesc = String(formData.get(`customRowDesc:${row.id}`) ?? '');
+			const rawAmount = String(formData.get(`customRowAmount:${row.id}`) ?? '');
+			const description = normalizeDescription(rawDesc, row.description);
+			const amountCents = rawAmount ? Math.round(parseFloat(rawAmount) * 100) : row.amountCents;
+			return {
+				id: row.id,
+				description,
+				amountCents: isNaN(amountCents) ? row.amountCents : Math.max(0, amountCents),
+				sourceExpenseId: row.sourceExpenseId
+			};
+		});
+
 		const issueDate = new Date();
-		const netTotalCents = updatedSelections.reduce((s, sel) => s + selectionAmount(sel), 0);
+		const taskTotal = updatedSelections.reduce((s, sel) => s + selectionAmount(sel), 0);
+		const customTotal = updatedCustomRows.reduce((s, r) => s + r.amountCents, 0);
+		const netTotalCents = taskTotal + customTotal;
 		const vatTotalCents = Math.round((netTotalCents * draft.vatRateBasisPoints) / 10000);
 		const grossTotalCents = netTotalCents + vatTotalCents;
 		const timeLogIds = updatedSelections.flatMap((sel) => getTimeLogIdsFromSelection(sel));
@@ -351,6 +413,7 @@ export const actions: Actions = {
 			company: { legalName: company.legalName, registrationNumber: company.eikBulstat, vatNumber: company.vatNumber, address: company.registeredAddress, molName: company.molName, email: company.email, phone: company.phone, website: company.website },
 			client: { legalName: draft.client.legalName, registrationNumber: draft.client.registrationNumber, vatNumber: draft.client.vatNumber, address: draft.client.billingAddress, molName: draft.client.mol },
 			projectGroups,
+			customRows: updatedCustomRows.map((r) => ({ description: r.description, amountCents: r.amountCents })),
 			netTotalCents, vatTotalCents, grossTotalCents, vatRateBasisPoints: draft.vatRateBasisPoints,
 			paidTotalCents: 0,
 			bankName: company.bankName, bankIban: company.bankIban, bankBic: company.bankBic
@@ -371,6 +434,9 @@ export const actions: Actions = {
 
 			for (const sel of updatedSelections) {
 				await tx.invoiceTaskSelection.update({ where: { id: sel.id }, data: { description: sel.description } });
+			}
+			for (const row of updatedCustomRows) {
+				await tx.invoiceCustomRow.update({ where: { id: row.id }, data: { description: row.description, amountCents: row.amountCents } });
 			}
 
 			const updated = await tx.invoice.updateMany({
@@ -394,5 +460,106 @@ export const actions: Actions = {
 		});
 
 		redirect(303, `/invoices/${draft.id}`);
+	},
+
+	addCustomRow: async ({ params, request, locals }) => {
+		if (!locals.user || !canManageInvoices(locals.user.role)) {
+			return fail(403, { draftError: 'Нямате права за тази операция.' });
+		}
+
+		const draft = await db.invoice.findFirst({
+			where: { id: params.invoiceId, status: 'draft' },
+			select: { id: true, _count: { select: { customRows: true } } }
+		});
+		if (!draft) return fail(404, { draftError: 'Черновата не е намерена.' });
+
+		const formData = await request.formData();
+		const description = String(formData.get('description') ?? '').trim();
+		const amountInput = String(formData.get('amountCents') ?? '');
+		const amountCents = Math.round(parseFloat(amountInput) * 100);
+
+		if (!description) return fail(422, { customRowError: 'Описанието е задължително.' });
+		if (!amountInput || isNaN(amountCents) || amountCents < 0) {
+			return fail(422, { customRowError: 'Въведете валидна сума.' });
+		}
+
+		await db.invoiceCustomRow.create({
+			data: {
+				invoiceId: draft.id,
+				description,
+				amountCents,
+				sortOrder: draft._count.customRows
+			}
+		});
+
+		return { customRowSuccess: true };
+	},
+
+	removeCustomRow: async ({ params, request, locals }) => {
+		if (!locals.user || !canManageInvoices(locals.user.role)) {
+			return fail(403, { draftError: 'Нямате права за тази операция.' });
+		}
+
+		const formData = await request.formData();
+		const rowId = String(formData.get('rowId') ?? '');
+
+		const row = await db.invoiceCustomRow.findFirst({
+			where: { id: rowId, invoiceId: params.invoiceId },
+			select: { id: true, sourceExpenseId: true }
+		});
+		if (!row) return fail(404, { draftError: 'Редът не е намерен.' });
+
+		await db.$transaction(async (tx) => {
+			await tx.invoiceCustomRow.delete({ where: { id: row.id } });
+			if (row.sourceExpenseId) {
+				await tx.expense.update({ where: { id: row.sourceExpenseId }, data: { invoicedAt: null } });
+			}
+		});
+
+		return { customRowSuccess: true };
+	},
+
+	pullBillableExpense: async ({ params, request, locals }) => {
+		if (!locals.user || !canManageInvoices(locals.user.role)) {
+			return fail(403, { draftError: 'Нямате права за тази операция.' });
+		}
+
+		const formData = await request.formData();
+		const expenseId = String(formData.get('expenseId') ?? '');
+
+		const [draft, expense] = await Promise.all([
+			db.invoice.findFirst({
+				where: { id: params.invoiceId, status: 'draft' },
+				select: { id: true, clientId: true, _count: { select: { customRows: true } } }
+			}),
+			db.expense.findFirst({
+				where: { id: expenseId, billableToInvoice: true, invoicedAt: null },
+				select: { id: true, clientId: true, description: true, amountCents: true }
+			})
+		]);
+
+		if (!draft) return fail(404, { draftError: 'Черновата не е намерена.' });
+		if (!expense) return fail(404, { draftError: 'Разходът не е намерен или вече е фактуриран.' });
+		if (expense.clientId !== draft.clientId) {
+			return fail(409, { draftError: 'Разходът е за различен клиент.' });
+		}
+
+		await db.$transaction(async (tx) => {
+			await tx.invoiceCustomRow.create({
+				data: {
+					invoiceId: draft.id,
+					description: expense.description,
+					amountCents: expense.amountCents,
+					sortOrder: draft._count.customRows,
+					sourceExpenseId: expense.id
+				}
+			});
+			await tx.expense.update({
+				where: { id: expense.id },
+				data: { invoicedAt: new Date() }
+			});
+		});
+
+		return { customRowSuccess: true };
 	}
 };

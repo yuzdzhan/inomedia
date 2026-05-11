@@ -62,58 +62,14 @@
 		allRecords.flatMap((r) => r.attachments.map((a) => ({ type: r.type, id: a.id })))
 	);
 
-	async function toDataUri(type: string, id: string): Promise<string> {
-		const res = await fetch(`/bank-statements/attachments/pdf/${type}/${id}`);
-		const blob = await res.blob();
-		return new Promise((resolve, reject) => {
-			const reader = new FileReader();
-			reader.onload = () => resolve(reader.result as string);
-			reader.onerror = reject;
-			reader.readAsDataURL(blob);
-		});
-	}
-
 	async function printAll() {
 		if (allAttachments.length === 0) return;
 		printing = true;
 
-		const win = window.open('', '_blank');
-		if (!win) {
-			alert('Позволете изскачащи прозорци за тази страница и опитайте отново.');
-			printing = false;
-			return;
-		}
-
-		win.document.write(`<!DOCTYPE html><html><head><title>Зарежда…</title></head><body><p style="font-family:sans-serif;padding:20px;">Зарежда документи…</p></body></html>`);
-
 		try {
-			const dataUris = await Promise.all(
-				allAttachments.map((a) => toDataUri(a.type, a.id))
-			);
-
-			const pages = dataUris
-				.map((uri) => `<div class="page"><embed src="${uri}" type="application/pdf"></div>`)
-				.join('\n');
-
-			const html = `<!DOCTYPE html><html><head>
-<title>Прикачени файлове — ${monthNames[data.month - 1]} ${data.year}</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #fff; }
-  .page { width: 100vw; height: 100vh; page-break-after: always; break-after: page; }
-  embed { width: 100%; height: 100%; border: none; display: block; }
-</style>
-</head><body>
-${pages}
-<script>window.addEventListener('load', function() { setTimeout(function() { window.print(); }, 400); });<\/script>
-</body></html>`;
-
-			win.document.open();
-			win.document.write(html);
-			win.document.close();
-		} catch (e) {
-			console.error(e);
-			win.close();
+			const items = allAttachments.map((a) => `${a.type}:${a.id}`).join(',');
+			const mergedUrl = `/bank-statements/attachments/merged?items=${encodeURIComponent(items)}`;
+			window.open(mergedUrl, '_blank');
 		} finally {
 			printing = false;
 		}

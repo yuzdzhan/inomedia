@@ -217,6 +217,20 @@
 		return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
 	}
 
+	function calcDurationFromTimes(e: Event) {
+		const form = (e.target as HTMLElement).closest('form');
+		if (!form) return;
+		const startVal = (form.querySelector('[name="startTime"]') as HTMLInputElement | null)?.value;
+		const endVal = (form.querySelector('[name="endTime"]') as HTMLInputElement | null)?.value;
+		const durInput = form.querySelector('[name="durationMinutes"]') as HTMLInputElement | null;
+		if (!startVal || !endVal || !durInput) return;
+		const [sh, sm] = startVal.split(':').map(Number);
+		const [eh, em] = endVal.split(':').map(Number);
+		const diff = (eh * 60 + em) - (sh * 60 + sm);
+		if (diff <= 0) return;
+		durInput.value = String(Math.round(diff / 15) * 15 || 15);
+	}
+
 	function memberColor(userId: string) {
 		const idx = data.project.members.findIndex((m) => m.userId === userId);
 		return avatarColors[(idx >= 0 ? idx : 0) % avatarColors.length];
@@ -873,11 +887,11 @@
 							</div>
 							<div class="field" style="margin:0;">
 								<label class="label" style="font-size:11px;" for="tl-start-{task.id}">Начало</label>
-								<input class="input" style="font-size:12px;" id="tl-start-{task.id}" name="startTime" type="time" value={createTimeLogFieldValue('startTime')} />
+								<input class="input" style="font-size:12px;" id="tl-start-{task.id}" name="startTime" type="time" value={createTimeLogFieldValue('startTime')} oninput={calcDurationFromTimes} />
 							</div>
 							<div class="field" style="margin:0;">
 								<label class="label" style="font-size:11px;" for="tl-end-{task.id}">Край</label>
-								<input class="input" style="font-size:12px;" id="tl-end-{task.id}" name="endTime" type="time" value={createTimeLogFieldValue('endTime')} />
+								<input class="input" style="font-size:12px;" id="tl-end-{task.id}" name="endTime" type="time" value={createTimeLogFieldValue('endTime')} oninput={calcDurationFromTimes} />
 							</div>
 						</div>
 						<div class="field" style="margin:0;">
@@ -936,11 +950,11 @@
 											</div>
 											<div class="field" style="margin:0;">
 												<label class="label" style="font-size:11px;" for="edit-tl-start-{timeLog.id}">Начало</label>
-												<input class="input" style="font-size:12px;" id="edit-tl-start-{timeLog.id}" name="startTime" type="time" value={timeLogFieldValue('startTime', formatMinuteOfDay(timeLog.startMinuteOfDay))} />
+												<input class="input" style="font-size:12px;" id="edit-tl-start-{timeLog.id}" name="startTime" type="time" value={timeLogFieldValue('startTime', formatMinuteOfDay(timeLog.startMinuteOfDay))} oninput={calcDurationFromTimes} />
 											</div>
 											<div class="field" style="margin:0;">
 												<label class="label" style="font-size:11px;" for="edit-tl-end-{timeLog.id}">Край</label>
-												<input class="input" style="font-size:12px;" id="edit-tl-end-{timeLog.id}" name="endTime" type="time" value={timeLogFieldValue('endTime', formatMinuteOfDay(timeLog.endMinuteOfDay))} />
+												<input class="input" style="font-size:12px;" id="edit-tl-end-{timeLog.id}" name="endTime" type="time" value={timeLogFieldValue('endTime', formatMinuteOfDay(timeLog.endMinuteOfDay))} oninput={calcDurationFromTimes} />
 											</div>
 										</div>
 										<div class="field" style="margin:0;">

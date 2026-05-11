@@ -414,6 +414,15 @@
 						{#if createFieldError('description')}<span style="font-size: 11px; color: var(--danger);">{createFieldError('description')}</span>{/if}
 					</div>
 
+					{#if createClientId}
+						<div class="field" style="margin-top: 4px;">
+							<label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px;">
+								<input type="checkbox" name="billableToInvoice" style="width:16px; height:16px;" />
+								Таксуване на клиента — добави в следващата фактура
+							</label>
+						</div>
+					{/if}
+
 					<button type="submit" class="btn btn-primary btn-sm">Добави разход</button>
 				</form>
 			</div>
@@ -448,6 +457,11 @@
 									<span style="font-weight: 500;">{expense.description}</span>
 									{#if expense.isFromTemplate}
 										<span class="badge outline" title="Генериран от повтарящ се шаблон">↻ шаблон</span>
+									{/if}
+									{#if expense.billableToInvoice && !expense.invoicedAt}
+										<span class="badge inv-issued" title="Ще бъде включен в следващата фактура за клиента">таксуем</span>
+									{:else if expense.billableToInvoice && expense.invoicedAt}
+										<span class="badge inv-paid" title="Включен във фактура">фактуриран</span>
 									{/if}
 								</div>
 							</td>
@@ -606,6 +620,15 @@
 												<textarea id={'edit-desc-' + expense.id} name="description" class="textarea" rows="3" required>{editFieldValue(expense.id, 'description', expense.description)}</textarea>
 												{#if editFieldError(expense.id, 'description')}<span style="font-size: 11px; color: var(--danger);">{editFieldError(expense.id, 'description')}</span>{/if}
 											</div>
+
+											{#if editClientId || expense.clientId}
+												<div class="field" style="margin-top: 4px;">
+													<label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px;">
+														<input type="checkbox" name="billableToInvoice" style="width:16px; height:16px;" checked={expense.billableToInvoice} />
+														Таксуване на клиента — добави в следващата фактура
+													</label>
+												</div>
+											{/if}
 
 											<div class="row gap-2" style="margin-top: 4px;">
 												<button type="submit" class="btn btn-primary btn-sm">Запази</button>
