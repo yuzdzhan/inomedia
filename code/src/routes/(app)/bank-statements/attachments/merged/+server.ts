@@ -23,7 +23,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 	const merged = await PDFDocument.create();
 
 	for (const { type, id } of items) {
-		let blob: Buffer | null = null;
+		let blob: Uint8Array | null = null;
 
 		if (type === 'income') {
 			const att = await db.standaloneIncomeAttachment.findFirst({
@@ -53,7 +53,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 
 	const pdfBytes = await merged.save();
 
-	return new Response(pdfBytes, {
+	return new Response(Buffer.from(pdfBytes), {
 		headers: {
 			'Content-Type': 'application/pdf',
 			'Content-Disposition': 'inline; filename="attachments.pdf"'

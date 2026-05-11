@@ -79,7 +79,7 @@ function fmtHours(hours: number): string {
 	const totalMinutes = Math.round(hours * 60);
 	const hh = Math.floor(totalMinutes / 60);
 	const mm = totalMinutes % 60;
-	return mm === 0 ? `${hh}h` : `${hh}h ${mm}min`;
+	return mm === 0 ? `${hh}ч` : `${hh}ч ${mm}м`;
 }
 
 function partyFields(party: InvoicePdfParty): string {

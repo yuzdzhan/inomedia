@@ -6,6 +6,7 @@ import { generateInvoicePdf, type InvoicePdfSnapshot } from '$lib/server/invoice
 import {
 	buildDefaultInvoiceLineDescription,
 	buildDraftSelectionSnapshot,
+	centsFromMinutes,
 	parseOptionalDateInput,
 	resolveDraftDueDate,
 	summarizeDraftSelections
@@ -517,6 +518,167 @@ export const actions: Actions = {
 		});
 
 		return { customRowSuccess: true };
+	},
+
+	syncDraft: async ({ params, request, locals, getClientAddress }) => {
+		if (!locals.user || !canManageInvoices(locals.user.role)) {
+			return fail(403, { draftError: 'Нямате права за тази операция.' });
+		}
+
+		const company = await db.company.findFirst({
+			select: { id: true, defaultPaymentTermDays: true }
+		});
+		if (!company) return fail(500, { draftError: 'Компанията не е намерена.' });
+
+		const draft = await db.invoice.findFirst({
+			where: { id: params.invoiceId, status: 'draft' },
+			include: {
+				client: { select: { id: true, defaultPaymentTermDays: true } },
+				taskSelections: {
+					include: {
+						task: {
+							include: {
+								taskList: { include: { project: { select: { id: true, name: true } } } },
+								timeLogs: {
+									where: { invoicedAt: null },
+									orderBy: [{ workDate: 'asc' }, { createdAt: 'asc' }],
+									select: { id: true, workDate: true, description: true, durationMinutes: true, startMinuteOfDay: true, endMinuteOfDay: true, snapshotCostRateCents: true, snapshotBillableRateCents: true, userId: true }
+								}
+							}
+						}
+					}
+				},
+				customRows: {
+					select: { id: true, amountCents: true, sourceExpenseId: true }
+				}
+			}
+		});
+		if (!draft) return fail(404, { draftError: 'Черновата не е намерена.' });
+
+		const existingSourceExpenseIds = draft.customRows
+			.map((r) => r.sourceExpenseId)
+			.filter((id): id is string => id !== null);
+
+		// Find new invoiceable tasks for this client not yet in any draft invoice
+		const newTasks = await db.task.findMany({
+			where: {
+				billingType: { in: ['hourly', 'flat_fee'] },
+				taskList: {
+					project: {
+						clientId: draft.clientId,
+						isBillable: true,
+						client: { companyId: company.id }
+					}
+				},
+				invoiceSelections: { none: { invoice: { status: 'draft' } } }
+			},
+			include: {
+				timeLogs: {
+					where: { invoicedAt: null },
+					orderBy: [{ workDate: 'asc' }, { createdAt: 'asc' }],
+					select: { id: true, workDate: true, description: true, durationMinutes: true, startMinuteOfDay: true, endMinuteOfDay: true, snapshotCostRateCents: true, snapshotBillableRateCents: true, userId: true }
+				},
+				taskList: { include: { project: { select: { id: true, name: true } } } }
+			}
+		});
+
+		const validNewTasks = newTasks.filter((task) => {
+			if (task.billingType === 'flat_fee') return (task.flatFeeAmountCents ?? 0) > 0;
+			const total = task.timeLogs.reduce((s, l) => s + centsFromMinutes(l.snapshotBillableRateCents, l.durationMinutes), 0);
+			return task.timeLogs.length > 0 && total > 0;
+		});
+
+		// Find new billable expenses not already pulled into this invoice
+		const newExpenses = await db.expense.findMany({
+			where: {
+				clientId: draft.clientId,
+				billableToInvoice: true,
+				invoicedAt: null,
+				...(existingSourceExpenseIds.length > 0 ? { id: { notIn: existingSourceExpenseIds } } : {})
+			},
+			orderBy: [{ incurredDate: 'asc' }],
+			select: { id: true, description: true, amountCents: true }
+		});
+
+		// Recalculate existing task selections with fresh timelog data
+		const descriptionByTaskId = new Map(draft.taskSelections.map((s) => [s.taskId, s.description]));
+		const existingSnapshots = draft.taskSelections.map((s) =>
+			buildDraftSelectionSnapshot(
+				s.task,
+				draft.clientId,
+				descriptionByTaskId.get(s.taskId) ?? buildDefaultInvoiceLineDescription(s.task)
+			)
+		);
+		const existingSnapshotByTaskId = new Map(existingSnapshots.map((s) => [s.taskId, s]));
+
+		// Build snapshots for new tasks
+		const newSnapshots = validNewTasks.map((task) =>
+			buildDraftSelectionSnapshot(task, draft.clientId)
+		);
+
+		const existingCustomRowCount = draft.customRows.length;
+		const now = new Date();
+
+		await db.$transaction(async (tx) => {
+			// Recalculate existing task selections
+			for (const sel of draft.taskSelections) {
+				const snap = existingSnapshotByTaskId.get(sel.taskId);
+				if (!snap) continue;
+				await tx.invoiceTaskSelection.update({
+					where: { id: sel.id },
+					data: { description: snap.description, hourlyUninvoicedValueCents: snap.hourlyUninvoicedValueCents, flatFeeValueCents: snap.flatFeeValueCents, snapshotJson: snap.snapshotJson, snapshotTakenAt: now }
+				});
+			}
+
+			// Add new task selections
+			for (const snap of newSnapshots) {
+				await tx.invoiceTaskSelection.create({
+					data: { invoiceId: draft.id, taskId: snap.taskId, description: snap.description, hourlyUninvoicedValueCents: snap.hourlyUninvoicedValueCents, flatFeeValueCents: snap.flatFeeValueCents, snapshotJson: snap.snapshotJson }
+				});
+			}
+
+			// Add new expense custom rows and mark expenses as invoiced
+			for (let i = 0; i < newExpenses.length; i++) {
+				const exp = newExpenses[i];
+				await tx.invoiceCustomRow.create({
+					data: { invoiceId: draft.id, description: exp.description, amountCents: exp.amountCents, sortOrder: existingCustomRowCount + i, sourceExpenseId: exp.id }
+				});
+				await tx.expense.update({ where: { id: exp.id }, data: { invoicedAt: now } });
+			}
+
+			// Recalculate totals across all selections and custom rows
+			const allSnapshots = [...existingSnapshots, ...newSnapshots];
+			const totals = summarizeDraftSelections(allSnapshots, draft.vatRateBasisPoints);
+			const customTotal = draft.customRows.reduce((s, r) => s + r.amountCents, 0) +
+				newExpenses.reduce((s, e) => s + e.amountCents, 0);
+			const netTotalCents = totals.netTotalCents + customTotal;
+			const vatTotalCents = Math.round((netTotalCents * draft.vatRateBasisPoints) / 10000);
+
+			await tx.invoice.update({
+				where: { id: draft.id },
+				data: {
+					servicePeriodFrom: draft.servicePeriodFrom ?? totals.servicePeriodFrom,
+					servicePeriodTo: draft.servicePeriodTo ?? totals.servicePeriodTo,
+					netTotalCents,
+					vatTotalCents,
+					grossTotalCents: netTotalCents + vatTotalCents,
+					isStaleDraft: false,
+					lastUpdatedAt: now
+				}
+			});
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id, eventType: 'invoice_draft_synced', entityType: 'invoice', entityId: draft.id,
+			newValueJson: { newTasksAdded: validNewTasks.length, newExpensesAdded: newExpenses.length },
+			ipAddress: getClientAddress(), userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return {
+			draftSuccess: validNewTasks.length === 0 && newExpenses.length === 0
+				? 'Няма нови записи за добавяне.'
+				: `Синхронизирано: +${validNewTasks.length} задачи, +${newExpenses.length} разхода.`
+		};
 	},
 
 	pullBillableExpense: async ({ params, request, locals }) => {

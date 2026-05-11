@@ -37,7 +37,7 @@
 					const amt = sel.hourlyUninvoicedValueCents ?? sel.flatFeeValueCents ?? 0;
 					if (!map.has(pn)) map.set(pn, { tasks: [], netAmountCents: 0 });
 					const g = map.get(pn)!;
-					g.tasks.push({ description: sel.description, amountCents: amt });
+					g.tasks.push({ description: sel.description, amountCents: amt, hours: hoursFromSelection(sel) });
 					g.netAmountCents += amt;
 				}
 				return Array.from(map.entries()).map(([projectName, d]) => ({ projectName, tasks: d.tasks, netAmountCents: d.netAmountCents }));
@@ -55,6 +55,21 @@
 			minimumFractionDigits: 2,
 			maximumFractionDigits: 2
 		});
+	}
+
+	function fmtDuration(hours: number): string {
+		const totalMinutes = Math.round(hours * 60);
+		const hh = Math.floor(totalMinutes / 60);
+		const mm = totalMinutes % 60;
+		return mm === 0 ? `${hh}ч` : `${hh}ч ${mm}м`;
+	}
+
+	function hoursFromSelection(sel: { snapshotJson: unknown; hourlyUninvoicedValueCents: number | null }): number | null {
+		if (sel.hourlyUninvoicedValueCents === null) return null;
+		if (!sel.snapshotJson || typeof sel.snapshotJson !== 'object' || Array.isArray(sel.snapshotJson)) return null;
+		const snap = sel.snapshotJson as { timeLogs?: Array<{ durationMinutes?: number }> };
+		const totalMinutes = (snap.timeLogs ?? []).reduce((s, t) => s + (t.durationMinutes ?? 0), 0);
+		return totalMinutes > 0 ? totalMinutes / 60 : null;
 	}
 
 	const statusLabels: Record<string, string> = {
@@ -222,6 +237,9 @@
 			<button class="btn btn-secondary btn-sm" type="submit" formaction="?/saveDraft">Запази</button>
 			<button class="btn btn-ghost btn-sm" type="submit" formaction="?/recalculateDraft">
 				<Icon name="refresh" size={13} />Преизчисли
+			</button>
+			<button class="btn btn-ghost btn-sm" type="submit" formaction="?/syncDraft">
+				<Icon name="refresh" size={13} />Синхронизирай
 			</button>
 			<a href="/invoices/{invoice.id}/preview-pdf" target="_blank" class="btn btn-ghost btn-sm">
 				<Icon name="file" size={13} />Регенерирай PDF
@@ -399,7 +417,9 @@
 						{#each group.tasks as task}
 							<tr class="inv-tr inv-tr-task">
 								<td class="inv-td inv-td-num"></td>
-								<td class="inv-td inv-td-desc inv-td-task-desc">{task.description}</td>
+								<td class="inv-td inv-td-desc inv-td-task-desc">
+									{#if task.hours != null}<span class="inv-hours">{fmtDuration(task.hours)}</span> — {/if}{task.description}
+								</td>
 								<td class="inv-td"></td>
 								<td class="inv-td inv-td-total inv-td-task-total">{fmtMoney(task.amountCents)}</td>
 							</tr>
@@ -732,6 +752,7 @@
 
 	.inv-td-project   { font-weight: 600; }
 	.inv-td-task-desc { font-size: 11px; color: #494551; padding-top: 4px; padding-bottom: 4px; padding-left: 20px; }
+	.inv-hours { font-weight: 600; color: #4f378a; font-variant-numeric: tabular-nums; }
 	.inv-td-task-total { font-size: 11px; font-weight: 400; color: #494551; padding-top: 4px; padding-bottom: 4px; }
 
 	/* ── 4. Summary Card ────────────────────────────────────────────────────── */
