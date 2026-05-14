@@ -80,13 +80,42 @@
 			active: (p) => p.startsWith('/bank-statements') || p === '/cashflow' || p.startsWith('/bank-statements/attachments'),
 			roles: ['admin', 'accountant']
 		},
+
+		{ section: 'ОТЧЕТИ' },
 		{
-			id: 'reports',
-			label: 'Отчети',
+			id: 'reports-overview',
+			label: 'Обобщение',
 			icon: 'chart',
+			href: '/reports/overview',
+			roles: ['admin', 'accountant']
+		},
+		{
+			id: 'reports-billing',
+			label: 'Фактуриране',
+			icon: 'receipt',
 			href: '/reports/billing',
-			active: (p) => p.startsWith('/reports'),
 			roles: ['admin', 'accountant', 'manager']
+		},
+		{
+			id: 'reports-expenses',
+			label: 'Разходи',
+			icon: 'file',
+			href: '/reports/expenses',
+			roles: ['admin', 'accountant', 'manager']
+		},
+		{
+			id: 'reports-profitability',
+			label: 'Рентабилност',
+			icon: 'activity',
+			href: '/reports/profitability',
+			roles: ['admin', 'accountant', 'manager']
+		},
+		{
+			id: 'reports-cash',
+			label: 'Парична позиция',
+			icon: 'bank',
+			href: '/reports/cash-position',
+			roles: ['admin', 'accountant']
 		},
 
 		{ section: 'АДМИНИСТРАЦИЯ' },
@@ -111,6 +140,7 @@
 		'/expenses': 'Разходи',
 		'/bank-statements': 'Банка и каса',
 		'/cashflow': 'Финанси',
+		'/reports/overview': 'Отчети',
 		'/reports/billing': 'Отчети',
 		'/reports/expenses': 'Отчети',
 		'/reports/profitability': 'Отчети',
