@@ -10,6 +10,7 @@ services:
       BETTER_AUTH_URL: https://app.ynmehmedov.eu
       PROJECT_DOMAIN: app.ynmehmedov.eu
       NODE_ENV: production
+      OTEL_SDK_DISABLED: "true"
     depends_on:
       db:
         condition: service_healthy
