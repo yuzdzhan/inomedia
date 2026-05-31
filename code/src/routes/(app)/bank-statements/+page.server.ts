@@ -23,13 +23,14 @@ function parseUniCreditRows(
 	// Skip header row
 	for (const line of lines.slice(1)) {
 		const parts = line.split(',');
-		if (parts.length < 7) continue;
-		// Columns: 0=account, 1=date (DD.MM.YYYY HH:MM:SS), 2=description,
-		//          3=amount_acct, 4=amount_op, 5=rate, 6=type (ДТ/КТ), ...
+		// UniCredit CSV has 10 fixed columns but descriptions can contain commas.
+		// The last 7 columns are always: amount_acct, amount_op, rate, type, kind, number, valdate.
+		// So we index from the right to avoid being thrown off by commas in the description.
+		if (parts.length < 10) continue;
 		const dateStr = parts[1].trim();
-		const description = parts[2].trim();
-		const amountStr = parts[3].trim();
-		const typeStr = parts[6].trim();
+		const description = parts.slice(2, parts.length - 7).join(',').trim();
+		const amountStr = parts[parts.length - 7].trim();
+		const typeStr = parts[parts.length - 4].trim();
 
 		const dateMatch = dateStr.match(/^(\d{2})\.(\d{2})\.(\d{4})/);
 		if (!dateMatch) continue;

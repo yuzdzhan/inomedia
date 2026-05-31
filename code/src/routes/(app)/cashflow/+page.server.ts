@@ -28,11 +28,14 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 		// Bootstrap containers if they don't exist yet
 		const containers = await ensureMoneyContainers(company.id);
 
-		// Load ledger entries for each container with aggregated balance
+		// Load ledger entries for each container with aggregated balance (up to today)
+		const today = new Date();
+		today.setHours(23, 59, 59, 999);
+
 		const [bankContainer, cashboxContainer] = await Promise.all(
 			containers.map(async (container) => {
 				const aggregate = await db.ledgerEntry.aggregate({
-					where: { containerId: container.id },
+					where: { containerId: container.id, entryDate: { lte: today } },
 					_sum: { amountCents: true }
 				});
 				const sumCents = aggregate._sum.amountCents ?? 0;
