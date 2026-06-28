@@ -77,7 +77,14 @@
 			label: 'Банка и каса',
 			icon: 'bank',
 			href: '/bank-statements',
-			active: (p) => p.startsWith('/bank-statements') || p === '/cashflow' || p.startsWith('/bank-statements/attachments'),
+			active: (p) => p.startsWith('/bank-statements'),
+			roles: ['admin', 'accountant']
+		},
+		{
+			id: 'cashflow',
+			label: 'Паричен поток',
+			icon: 'activity',
+			href: '/cashflow',
 			roles: ['admin', 'accountant']
 		},
 
@@ -139,7 +146,7 @@
 		'/invoices': 'Фактури',
 		'/expenses': 'Разходи',
 		'/bank-statements': 'Банка и каса',
-		'/cashflow': 'Финанси',
+		'/cashflow': 'Паричен поток',
 		'/reports/overview': 'Отчети',
 		'/reports/billing': 'Отчети',
 		'/reports/expenses': 'Отчети',

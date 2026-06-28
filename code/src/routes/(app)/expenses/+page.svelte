@@ -8,6 +8,7 @@
 	let showCreateForm = $state(false);
 	let editingExpenseId = $state<string | null>(null);
 	let markingPaidExpenseId = $state<string | null>(null);
+	let attachingExpenseId = $state<string | null>(null);
 	let showAddCategoryForm = $state(false);
 
 	// Recurring template form state
@@ -515,6 +516,16 @@
 											<button type="submit" class="btn btn-secondary btn-sm">Върни неплатен</button>
 										</form>
 									{/if}
+									{#if data.permissions.canMarkPaid}
+										<button
+											type="button"
+											class="btn btn-secondary btn-sm"
+											title={expense.attachments.length > 0 ? `${expense.attachments.length} файл(а)` : 'Прикачи файл'}
+											onclick={() => (attachingExpenseId = attachingExpenseId === expense.id ? null : expense.id)}
+										>
+											📎{expense.attachments.length > 0 ? ` ${expense.attachments.length}` : ''}
+										</button>
+									{/if}
 								</div>
 							</td>
 						</tr>
@@ -673,8 +684,42 @@
 							</tr>
 						{/if}
 
-						{#if expense.status === 'paid' && expense.paidDate}
-							<!-- paid info shown inline in description or via expand; no extra row needed -->
+						{#if attachingExpenseId === expense.id && data.permissions.canMarkPaid}
+							<tr>
+								<td colspan="7" style="padding: 0; background: var(--surface);">
+									<div style="padding: 16px; border-top: 1px solid var(--border);">
+										{#if expense.attachments.length > 0}
+											<div style="margin-bottom: 12px;">
+												<div class="label" style="margin-bottom: 6px; font-size: 11px;">Прикачени файлове</div>
+												<div style="display: flex; flex-direction: column; gap: 4px;">
+													{#each expense.attachments as att}
+														<a href="/bank-statements/attachments/pdf/expense/{att.id}" target="_blank"
+															style="font-size: 13px; color: var(--accent); text-decoration: none;">
+															↗ {att.originalFilename}
+														</a>
+													{/each}
+												</div>
+											</div>
+										{/if}
+										{#if (form as any)?.uploadAttachmentError && (form as any)?.uploadAttachmentExpenseId === expense.id}
+											<div class="alert danger" style="margin-bottom: 8px; font-size: 13px;">{(form as any).uploadAttachmentError}</div>
+										{/if}
+										<form method="POST" action="?/uploadExpenseAttachment" enctype="multipart/form-data">
+											<input type="hidden" name="expenseId" value={expense.id} />
+											<div style="display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap;">
+												<div class="field" style="flex: 1; min-width: 200px; margin: 0;">
+													<label class="label" for={'att-file-' + expense.id} style="font-size: 11px;">Прикачи PDF или изображение</label>
+													<input id={'att-file-' + expense.id} type="file" name="file" class="input"
+														accept=".pdf,.jpg,.jpeg,.png" required />
+												</div>
+												<button type="submit" class="btn btn-primary btn-sm">Качи</button>
+												<button type="button" class="btn btn-secondary btn-sm"
+													onclick={() => (attachingExpenseId = null)}>Затвори</button>
+											</div>
+										</form>
+									</div>
+								</td>
+							</tr>
 						{/if}
 					{/each}
 				</tbody>

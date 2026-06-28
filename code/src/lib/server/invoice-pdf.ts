@@ -52,7 +52,7 @@ function getBrowser(): Promise<Browser> {
 	if (!browserPromise) {
 		browserPromise = puppeteer.launch({
 			headless: true,
-			executablePath: '/usr/bin/chromium-browser',
+			executablePath: process.env.PUPPETEER_EXECUTABLE_PATH ?? '/usr/bin/chromium',
 			args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
 		}).catch(err => {
 			browserPromise = null;

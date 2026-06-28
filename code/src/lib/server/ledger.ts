@@ -53,15 +53,6 @@ export async function createExpensePaymentLedgerEntry(
 	description: string,
 	userId: string
 ): Promise<void> {
-	const container = await tx.moneyContainer.findUnique({
-		where: { id: containerId },
-		select: { id: true }
-	});
-
-	if (!container) {
-		return;
-	}
-
 	await tx.ledgerEntry.create({
 		data: {
 			containerId,

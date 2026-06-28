@@ -200,7 +200,8 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 				project: { select: { id: true, name: true } },
 				createdByUser: { select: { id: true, firstName: true, lastName: true } },
 				paidByUser: { select: { id: true, firstName: true, lastName: true } },
-				paidContainer: { select: { id: true, name: true, containerType: true } }
+				paidContainer: { select: { id: true, name: true, containerType: true } },
+				attachments: { select: { id: true, originalFilename: true }, orderBy: { createdAt: 'asc' } }
 			}
 		});
 
@@ -903,6 +904,48 @@ export const actions: Actions = {
 		});
 
 		return { editTemplateSuccess: true, editTemplateId: templateId };
+	},
+
+	uploadExpenseAttachment: async ({ request, locals }) => {
+		if (!locals.user || !canMarkPaid(locals.user.role)) {
+			return fail(403, { uploadAttachmentError: 'Нямате права за тази операция.' });
+		}
+
+		const company = await db.company.findFirst();
+		if (!company) return fail(500, { uploadAttachmentError: 'Грешка.' });
+
+		const formData = await request.formData();
+		const expenseId = String(formData.get('expenseId') ?? '');
+		const file = formData.get('file');
+
+		if (!expenseId) {
+			return fail(422, { uploadAttachmentError: 'Липсва разход.', uploadAttachmentExpenseId: expenseId });
+		}
+		if (!file || !(file instanceof File) || file.size === 0) {
+			return fail(422, { uploadAttachmentError: 'Изберете файл.', uploadAttachmentExpenseId: expenseId });
+		}
+		if (file.size > 10 * 1024 * 1024) {
+			return fail(422, { uploadAttachmentError: 'Файлът е твърде голям (макс. 10MB).', uploadAttachmentExpenseId: expenseId });
+		}
+
+		const expense = await db.expense.findFirst({ where: { id: expenseId, companyId: company.id } });
+		if (!expense) {
+			return fail(404, { uploadAttachmentError: 'Разходът не е намерен.', uploadAttachmentExpenseId: expenseId });
+		}
+
+		const blob = Buffer.from(await file.arrayBuffer());
+
+		await db.expenseAttachment.create({
+			data: {
+				expenseId,
+				originalFilename: file.name,
+				contentType: file.type || 'application/octet-stream',
+				sizeBytes: file.size,
+				blob
+			}
+		});
+
+		return { uploadAttachmentSuccess: true, uploadAttachmentExpenseId: expenseId };
 	},
 
 	deactivateRecurringTemplate: async ({ request, locals, getClientAddress }) => {
