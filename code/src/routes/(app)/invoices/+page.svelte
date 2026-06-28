@@ -81,11 +81,23 @@
 		<p class="page-sub">{totalCount} фактури · {overdueCount > 0 ? `${overdueCount} просрочени` : 'без просрочени'}</p>
 	</div>
 	<div class="page-header-actions">
+		<form method="POST" action="?/createManualDraft" class="row gap-2">
+			<select class="select" name="clientId" required style="width:190px;">
+				<option value="">Клиент</option>
+				{#each data.clients as client}
+					<option value={client.id} selected={(form as any)?.manualDraftClientId === client.id}>{client.legalName}</option>
+				{/each}
+			</select>
+			<button type="submit" class="btn btn-primary btn-sm"><Icon name="plus" size={13}/>Ръчна</button>
+		</form>
 		<a href="/invoiceable-work" class="btn btn-secondary btn-sm"><Icon name="plus" size={13}/>Нова фактура</a>
 	</div>
 </div>
 
 <!-- Global alerts -->
+{#if (form as any)?.manualDraftError}
+	<div class="alert danger" style="margin-bottom:12px;">{(form as any).manualDraftError}</div>
+{/if}
 {#if data.draftCreated}
 	<div class="alert warning" style="margin-bottom:12px;">Черновата е създадена успешно.</div>
 {/if}
