@@ -365,6 +365,51 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 };
 
 export const actions: Actions = {
+	createManualDraft: async ({ request, locals, getClientAddress }) => {
+		if (!locals.user || !canManageInvoices(locals.user.role)) {
+			return fail(403, { manualDraftError: 'Нямате права за тази операция.' });
+		}
+
+		const company = await getCompanyOrRedirect();
+		const formData = await request.formData();
+		const clientId = String(formData.get('clientId') ?? '');
+
+		const client = await db.client.findFirst({
+			where: { id: clientId, companyId: company.id, status: 'active' },
+			select: { id: true, defaultPaymentTermDays: true }
+		});
+
+		if (!client) {
+			return fail(422, { manualDraftError: 'Изберете валиден клиент.', manualDraftClientId: clientId });
+		}
+
+		const invoice = await db.invoice.create({
+			data: {
+				clientId: client.id,
+				createdByUserId: locals.user.id,
+				vatRateBasisPoints: company.vatRateBasisPoints,
+				dueDate: resolveDraftDueDate(
+					null,
+					client.defaultPaymentTermDays,
+					company.defaultPaymentTermDays
+				)
+			},
+			select: { id: true }
+		});
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'manual_invoice_draft_created',
+			entityType: 'invoice',
+			entityId: invoice.id,
+			newValueJson: { clientId: client.id },
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		redirect(303, `/invoices/${invoice.id}`);
+	},
+
 	saveDraft: async ({ request, locals, getClientAddress }) => {
 		if (!locals.user || !canManageInvoices(locals.user.role)) {
 			return fail(403, { draftError: 'Нямате права за тази операция.' });

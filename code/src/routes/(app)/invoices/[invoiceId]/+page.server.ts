@@ -43,6 +43,27 @@ function getHoursFromSelection(selection: { snapshotJson: Prisma.JsonValue | nul
 	return totalMinutes > 0 ? totalMinutes / 60 : null;
 }
 
+function customRowAmount(row: { amountCents: number }) {
+	return Math.max(0, row.amountCents);
+}
+
+function calculateTotals(
+	taskSelections: Array<{ hourlyUninvoicedValueCents: number | null; flatFeeValueCents: number | null }>,
+	customRows: Array<{ amountCents: number }>,
+	vatRateBasisPoints: number
+) {
+	const taskTotal = taskSelections.reduce((sum, selection) => sum + selectionAmount(selection), 0);
+	const customTotal = customRows.reduce((sum, row) => sum + customRowAmount(row), 0);
+	const netTotalCents = taskTotal + customTotal;
+	const vatTotalCents = Math.round((netTotalCents * vatRateBasisPoints) / 10000);
+
+	return {
+		netTotalCents,
+		vatTotalCents,
+		grossTotalCents: netTotalCents + vatTotalCents
+	};
+}
+
 export const load: PageServerLoad = async ({ params, parent }) => {
 	try {
 		const { user } = await parent();
@@ -104,7 +125,21 @@ export const load: PageServerLoad = async ({ params, parent }) => {
 					},
 					customRows: {
 						orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-						select: { id: true, description: true, amountCents: true, sortOrder: true, sourceExpenseId: true }
+						select: {
+							id: true,
+							description: true,
+							amountCents: true,
+							sortOrder: true,
+							sourceExpenseId: true,
+							sourceExpense: {
+								select: {
+									id: true,
+									status: true,
+									incurredDate: true,
+									category: { select: { name: true } }
+								}
+							}
+						}
 					},
 					payments: {
 						orderBy: [{ paymentDate: 'asc' }],
@@ -153,10 +188,18 @@ export const load: PageServerLoad = async ({ params, parent }) => {
 					where: {
 						clientId: invoice.clientId,
 						billableToInvoice: true,
-						invoicedAt: null
+						invoicedAt: null,
+						customRow: { is: null }
 					},
 					orderBy: [{ incurredDate: 'asc' }],
-					select: { id: true, description: true, amountCents: true, incurredDate: true }
+					select: {
+						id: true,
+						description: true,
+						amountCents: true,
+						incurredDate: true,
+						status: true,
+						category: { select: { name: true } }
+					}
 				})
 			: [];
 
@@ -188,7 +231,19 @@ export const actions: Actions = {
 				},
 				customRows: {
 					orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-					select: { id: true, description: true, amountCents: true }
+					select: {
+						id: true,
+						description: true,
+						amountCents: true,
+						sourceExpenseId: true,
+						sourceExpense: {
+							select: {
+								id: true,
+								amountCents: true,
+								ledgerEntry: { select: { id: true } }
+							}
+						}
+					}
 				}
 			}
 		});
@@ -218,13 +273,16 @@ export const actions: Actions = {
 			const rawAmount = String(formData.get(`customRowAmount:${row.id}`) ?? '');
 			const description = normalizeDescription(rawDesc, row.description);
 			const amountCents = rawAmount ? Math.round(parseFloat(rawAmount) * 100) : row.amountCents;
-			return { id: row.id, description, amountCents: isNaN(amountCents) ? row.amountCents : Math.max(0, amountCents) };
+			return {
+				id: row.id,
+				description,
+				amountCents: isNaN(amountCents) ? row.amountCents : Math.max(0, amountCents),
+				sourceExpenseId: row.sourceExpenseId,
+				sourceExpense: row.sourceExpense
+			};
 		});
 
-		const taskTotal = draft.taskSelections.reduce((s, sel) => s + selectionAmount(sel), 0);
-		const customTotal = customRowUpdates.reduce((s, r) => s + r.amountCents, 0);
-		const netTotalCents = taskTotal + customTotal;
-		const vatTotalCents = Math.round((netTotalCents * draft.vatRateBasisPoints) / 10000);
+		const totals = calculateTotals(draft.taskSelections, customRowUpdates, draft.vatRateBasisPoints);
 
 		await db.$transaction(async (tx) => {
 			for (const sel of selectionUpdates) {
@@ -232,10 +290,22 @@ export const actions: Actions = {
 			}
 			for (const row of customRowUpdates) {
 				await tx.invoiceCustomRow.update({ where: { id: row.id }, data: { description: row.description, amountCents: row.amountCents } });
+				if (row.sourceExpenseId) {
+					await tx.expense.update({
+						where: { id: row.sourceExpenseId },
+						data: { amountCents: row.amountCents }
+					});
+				}
+				if (row.sourceExpense?.ledgerEntry) {
+					await tx.ledgerEntry.update({
+						where: { id: row.sourceExpense.ledgerEntry.id },
+						data: { amountCents: row.amountCents }
+					});
+				}
 			}
 			await tx.invoice.update({
 				where: { id: draft.id },
-				data: { dueDate, servicePeriodFrom, servicePeriodTo, netTotalCents, vatTotalCents, grossTotalCents: netTotalCents + vatTotalCents, lastUpdatedAt: new Date() }
+				data: { dueDate, servicePeriodFrom, servicePeriodTo, ...totals, lastUpdatedAt: new Date() }
 			});
 		});
 
@@ -340,7 +410,18 @@ export const actions: Actions = {
 				},
 				customRows: {
 					orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-					select: { id: true, description: true, amountCents: true, sourceExpenseId: true }
+					select: {
+						id: true,
+						description: true,
+						amountCents: true,
+						sourceExpenseId: true,
+						sourceExpense: {
+							select: {
+								id: true,
+								ledgerEntry: { select: { id: true } }
+							}
+						}
+					}
 				}
 			}
 		});
@@ -379,17 +460,25 @@ export const actions: Actions = {
 				id: row.id,
 				description,
 				amountCents: isNaN(amountCents) ? row.amountCents : Math.max(0, amountCents),
-				sourceExpenseId: row.sourceExpenseId
+				sourceExpenseId: row.sourceExpenseId,
+				sourceExpense: row.sourceExpense
 			};
 		});
 
+		if (updatedSelections.length + updatedCustomRows.length === 0) {
+			return fail(422, { draftError: 'Фактурата трябва да има поне един ред преди издаване.' });
+		}
+
 		const issueDate = new Date();
-		const taskTotal = updatedSelections.reduce((s, sel) => s + selectionAmount(sel), 0);
-		const customTotal = updatedCustomRows.reduce((s, r) => s + r.amountCents, 0);
-		const netTotalCents = taskTotal + customTotal;
-		const vatTotalCents = Math.round((netTotalCents * draft.vatRateBasisPoints) / 10000);
-		const grossTotalCents = netTotalCents + vatTotalCents;
+		const { netTotalCents, vatTotalCents, grossTotalCents } = calculateTotals(
+			updatedSelections,
+			updatedCustomRows,
+			draft.vatRateBasisPoints
+		);
 		const timeLogIds = updatedSelections.flatMap((sel) => getTimeLogIdsFromSelection(sel));
+		const sourceExpenseIds = updatedCustomRows
+			.map((row) => row.sourceExpenseId)
+			.filter((id): id is string => id !== null);
 
 		const projectMap = new Map<string, { tasks: { description: string; hours: number | null; amountCents: number }[]; netAmountCents: number }>();
 		for (const sel of updatedSelections) {
@@ -438,6 +527,18 @@ export const actions: Actions = {
 			}
 			for (const row of updatedCustomRows) {
 				await tx.invoiceCustomRow.update({ where: { id: row.id }, data: { description: row.description, amountCents: row.amountCents } });
+				if (row.sourceExpenseId) {
+					await tx.expense.update({
+						where: { id: row.sourceExpenseId },
+						data: { amountCents: row.amountCents }
+					});
+				}
+				if (row.sourceExpense?.ledgerEntry) {
+					await tx.ledgerEntry.update({
+						where: { id: row.sourceExpense.ledgerEntry.id },
+						data: { amountCents: row.amountCents }
+					});
+				}
 			}
 
 			const updated = await tx.invoice.updateMany({
@@ -449,6 +550,12 @@ export const actions: Actions = {
 
 			if (timeLogIds.length > 0) {
 				await tx.taskTimeLog.updateMany({ where: { id: { in: timeLogIds }, invoicedAt: null }, data: { invoicedAt: issueDate } });
+			}
+			if (sourceExpenseIds.length > 0) {
+				await tx.expense.updateMany({
+					where: { id: { in: sourceExpenseIds } },
+					data: { invoicedAt: issueDate }
+				});
 			}
 
 			return { invoiceNumber };
@@ -470,7 +577,17 @@ export const actions: Actions = {
 
 		const draft = await db.invoice.findFirst({
 			where: { id: params.invoiceId, status: 'draft' },
-			select: { id: true, _count: { select: { customRows: true } } }
+			select: {
+				id: true,
+				vatRateBasisPoints: true,
+				taskSelections: {
+					select: { hourlyUninvoicedValueCents: true, flatFeeValueCents: true }
+				},
+				customRows: {
+					select: { amountCents: true }
+				},
+				_count: { select: { customRows: true } }
+			}
 		});
 		if (!draft) return fail(404, { draftError: 'Черновата не е намерена.' });
 
@@ -484,13 +601,26 @@ export const actions: Actions = {
 			return fail(422, { customRowError: 'Въведете валидна сума.' });
 		}
 
-		await db.invoiceCustomRow.create({
-			data: {
-				invoiceId: draft.id,
-				description,
-				amountCents,
-				sortOrder: draft._count.customRows
-			}
+		await db.$transaction(async (tx) => {
+			await tx.invoiceCustomRow.create({
+				data: {
+					invoiceId: draft.id,
+					description,
+					amountCents,
+					sortOrder: draft._count.customRows
+				}
+			});
+			await tx.invoice.update({
+				where: { id: draft.id },
+				data: {
+					...calculateTotals(
+						draft.taskSelections,
+						[...draft.customRows, { amountCents }],
+						draft.vatRateBasisPoints
+					),
+					lastUpdatedAt: new Date()
+				}
+			});
 		});
 
 		return { customRowSuccess: true };
@@ -505,7 +635,7 @@ export const actions: Actions = {
 		const rowId = String(formData.get('rowId') ?? '');
 
 		const row = await db.invoiceCustomRow.findFirst({
-			where: { id: rowId, invoiceId: params.invoiceId },
+			where: { id: rowId, invoiceId: params.invoiceId, invoice: { status: 'draft' } },
 			select: { id: true, sourceExpenseId: true }
 		});
 		if (!row) return fail(404, { draftError: 'Редът не е намерен.' });
@@ -513,7 +643,31 @@ export const actions: Actions = {
 		await db.$transaction(async (tx) => {
 			await tx.invoiceCustomRow.delete({ where: { id: row.id } });
 			if (row.sourceExpenseId) {
-				await tx.expense.update({ where: { id: row.sourceExpenseId }, data: { invoicedAt: null } });
+				await tx.expense.update({
+					where: { id: row.sourceExpenseId },
+					data: { invoicedAt: null }
+				});
+			}
+			const remainingRows = await tx.invoiceCustomRow.findMany({
+				where: { invoiceId: params.invoiceId },
+				select: { amountCents: true }
+			});
+			const taskSelections = await tx.invoiceTaskSelection.findMany({
+				where: { invoiceId: params.invoiceId },
+				select: { hourlyUninvoicedValueCents: true, flatFeeValueCents: true }
+			});
+			const invoice = await tx.invoice.findUnique({
+				where: { id: params.invoiceId },
+				select: { vatRateBasisPoints: true }
+			});
+			if (invoice) {
+				await tx.invoice.update({
+					where: { id: params.invoiceId },
+					data: {
+						...calculateTotals(taskSelections, remainingRows, invoice.vatRateBasisPoints),
+						lastUpdatedAt: new Date()
+					}
+				});
 			}
 		});
 
@@ -555,10 +709,6 @@ export const actions: Actions = {
 		});
 		if (!draft) return fail(404, { draftError: 'Черновата не е намерена.' });
 
-		const existingSourceExpenseIds = draft.customRows
-			.map((r) => r.sourceExpenseId)
-			.filter((id): id is string => id !== null);
-
 		// Find new invoiceable tasks for this client not yet in any draft invoice
 		const newTasks = await db.task.findMany({
 			where: {
@@ -588,18 +738,6 @@ export const actions: Actions = {
 			return task.timeLogs.length > 0 && total > 0;
 		});
 
-		// Find new billable expenses not already pulled into this invoice
-		const newExpenses = await db.expense.findMany({
-			where: {
-				clientId: draft.clientId,
-				billableToInvoice: true,
-				invoicedAt: null,
-				...(existingSourceExpenseIds.length > 0 ? { id: { notIn: existingSourceExpenseIds } } : {})
-			},
-			orderBy: [{ incurredDate: 'asc' }],
-			select: { id: true, description: true, amountCents: true }
-		});
-
 		// Recalculate existing task selections with fresh timelog data
 		const descriptionByTaskId = new Map(draft.taskSelections.map((s) => [s.taskId, s.description]));
 		const existingSnapshots = draft.taskSelections.map((s) =>
@@ -616,7 +754,6 @@ export const actions: Actions = {
 			buildDraftSelectionSnapshot(task, draft.clientId)
 		);
 
-		const existingCustomRowCount = draft.customRows.length;
 		const now = new Date();
 
 		await db.$transaction(async (tx) => {
@@ -637,20 +774,10 @@ export const actions: Actions = {
 				});
 			}
 
-			// Add new expense custom rows and mark expenses as invoiced
-			for (let i = 0; i < newExpenses.length; i++) {
-				const exp = newExpenses[i];
-				await tx.invoiceCustomRow.create({
-					data: { invoiceId: draft.id, description: exp.description, amountCents: exp.amountCents, sortOrder: existingCustomRowCount + i, sourceExpenseId: exp.id }
-				});
-				await tx.expense.update({ where: { id: exp.id }, data: { invoicedAt: now } });
-			}
-
 			// Recalculate totals across all selections and custom rows
 			const allSnapshots = [...existingSnapshots, ...newSnapshots];
 			const totals = summarizeDraftSelections(allSnapshots, draft.vatRateBasisPoints);
-			const customTotal = draft.customRows.reduce((s, r) => s + r.amountCents, 0) +
-				newExpenses.reduce((s, e) => s + e.amountCents, 0);
+			const customTotal = draft.customRows.reduce((s, r) => s + r.amountCents, 0);
 			const netTotalCents = totals.netTotalCents + customTotal;
 			const vatTotalCents = Math.round((netTotalCents * draft.vatRateBasisPoints) / 10000);
 
@@ -670,14 +797,14 @@ export const actions: Actions = {
 
 		await logAuditEvent({
 			actorUserId: locals.user.id, eventType: 'invoice_draft_synced', entityType: 'invoice', entityId: draft.id,
-			newValueJson: { newTasksAdded: validNewTasks.length, newExpensesAdded: newExpenses.length },
+			newValueJson: { newTasksAdded: validNewTasks.length },
 			ipAddress: getClientAddress(), userAgent: request.headers.get('user-agent') ?? undefined
 		});
 
 		return {
-			draftSuccess: validNewTasks.length === 0 && newExpenses.length === 0
+			draftSuccess: validNewTasks.length === 0
 				? 'Няма нови записи за добавяне.'
-				: `Синхронизирано: +${validNewTasks.length} задачи, +${newExpenses.length} разхода.`
+				: `Синхронизирано: +${validNewTasks.length} задачи.`
 		};
 	},
 
@@ -692,10 +819,21 @@ export const actions: Actions = {
 		const [draft, expense] = await Promise.all([
 			db.invoice.findFirst({
 				where: { id: params.invoiceId, status: 'draft' },
-				select: { id: true, clientId: true, _count: { select: { customRows: true } } }
+				select: {
+					id: true,
+					clientId: true,
+					vatRateBasisPoints: true,
+					taskSelections: {
+						select: { hourlyUninvoicedValueCents: true, flatFeeValueCents: true }
+					},
+					customRows: {
+						select: { amountCents: true }
+					},
+					_count: { select: { customRows: true } }
+				}
 			}),
 			db.expense.findFirst({
-				where: { id: expenseId, billableToInvoice: true, invoicedAt: null },
+				where: { id: expenseId, billableToInvoice: true, invoicedAt: null, customRow: { is: null } },
 				select: { id: true, clientId: true, description: true, amountCents: true }
 			})
 		]);
@@ -716,9 +854,16 @@ export const actions: Actions = {
 					sourceExpenseId: expense.id
 				}
 			});
-			await tx.expense.update({
-				where: { id: expense.id },
-				data: { invoicedAt: new Date() }
+			await tx.invoice.update({
+				where: { id: draft.id },
+				data: {
+					...calculateTotals(
+						draft.taskSelections,
+						[...draft.customRows, { amountCents: expense.amountCents }],
+						draft.vatRateBasisPoints
+					),
+					lastUpdatedAt: new Date()
+				}
 			});
 		});
 

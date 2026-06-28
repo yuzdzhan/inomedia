@@ -224,6 +224,12 @@
 					<div class="field" style="margin:0;">
 						<label class="label" for="crdesc-{row.id}" style="font-size:10px;">Описание</label>
 						<textarea class="input textarea" id="crdesc-{row.id}" name="customRowDesc:{row.id}" rows="2" style="font-size:12px; resize:none;">{row.description}</textarea>
+						{#if row.sourceExpenseId}
+							<div class="muted" style="font-size:11px; margin-top:4px;">
+								Ред от разход{row.sourceExpense?.category?.name ? ` · ${row.sourceExpense.category.name}` : ''}
+								{#if row.sourceExpense?.incurredDate} · {fmtDate(row.sourceExpense.incurredDate)}{/if}
+							</div>
+						{/if}
 					</div>
 					<div class="field" style="margin:0;">
 						<label class="label" for="cramount-{row.id}" style="font-size:10px;">Сума ({company.currency})</label>
