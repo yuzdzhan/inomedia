@@ -14,7 +14,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 	const invoice = await db.invoice.findFirst({
 		where: {
 			id: params.invoiceId,
-			status: 'issued'
+			status: { not: 'draft' }
 		},
 		select: {
 			issuedPdfBlob: true,
