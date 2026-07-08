@@ -50,6 +50,10 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 							}
 						}
 					}
+				},
+				customRows: {
+					orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+					select: { description: true, amountCents: true }
 				}
 			}
 		}),
@@ -121,6 +125,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 			molName: invoice.client.mol
 		},
 		projectGroups,
+		customRows: invoice.customRows.map((r) => ({ description: r.description, amountCents: r.amountCents })),
 		netTotalCents: invoice.netTotalCents,
 		vatTotalCents: invoice.vatTotalCents,
 		grossTotalCents: invoice.grossTotalCents,
