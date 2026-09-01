@@ -1,6 +1,6 @@
 services:
   app:
-    build: .
+    build: ./code
     restart: unless-stopped
     ports:
       - "127.0.0.1:3002:3000"
