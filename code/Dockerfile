@@ -1,6 +1,10 @@
 FROM node:22-slim AS builder
 
 WORKDIR /app
+ARG BETTER_AUTH_SECRET
+ARG BETTER_AUTH_URL
+ENV BETTER_AUTH_SECRET=$BETTER_AUTH_SECRET
+ENV BETTER_AUTH_URL=$BETTER_AUTH_URL
 COPY package*.json ./
 RUN npm ci
 COPY . .
@@ -19,6 +23,10 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV NODE_ENV=production
 
 WORKDIR /app
+ARG BETTER_AUTH_SECRET
+ARG BETTER_AUTH_URL
+ENV BETTER_AUTH_SECRET=$BETTER_AUTH_SECRET
+ENV BETTER_AUTH_URL=$BETTER_AUTH_URL
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
