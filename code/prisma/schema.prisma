@@ -851,6 +851,8 @@ model ShopOrder {
   documentNumber     String?
   pdfFilename        String?
   pdfBlob            Bytes?
+  /// When the cash register receipt was issued, if it differs from the order's completion date.
+  receiptDate        DateTime?           @db.Date
   rawJson            Json
   payoutLines        CourierPayoutLine[]
   syncedAt           DateTime            @default(now())

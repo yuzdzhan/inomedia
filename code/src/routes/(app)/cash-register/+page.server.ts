@@ -46,19 +46,20 @@ async function reconcile(companyId: string, from: Date, to: Date, cashSalesCents
 			orderDate: { gte: new Date(from.getTime() - 60 * 86400_000), lt: toExclusive },
 			status: { notIn: NON_SALE_STATUSES }
 		},
-		select: { totalCents: true, rawJson: true }
+		select: { orderNumber: true, totalCents: true, rawJson: true, receiptDate: true }
 	});
-	let shopOrdersCents = 0;
-	let shopOrdersCount = 0;
+	const orders: Array<{ orderNumber: string; receiptDate: Date; goodsCents: number; receiptDateSet: boolean }> = [];
 	for (const o of candidates) {
 		const raw = o.rawJson as { date_completed?: string | null; shipping_total?: string; shipping_tax?: string };
-		if (!raw.date_completed) continue;
-		const completed = new Date(`${raw.date_completed.slice(0, 10)}T00:00:00Z`);
-		if (completed < from || completed >= toExclusive) continue;
+		const receiptDate =
+			o.receiptDate ?? (raw.date_completed ? new Date(`${raw.date_completed.slice(0, 10)}T00:00:00Z`) : null);
+		if (!receiptDate || receiptDate < from || receiptDate >= toExclusive) continue;
 		const shipping = Math.round((parseFloat(raw.shipping_total ?? '0') + parseFloat(raw.shipping_tax ?? '0')) * 100);
-		shopOrdersCents += o.totalCents - shipping;
-		shopOrdersCount++;
+		orders.push({ orderNumber: o.orderNumber, receiptDate, goodsCents: o.totalCents - shipping, receiptDateSet: Boolean(o.receiptDate) });
 	}
+	orders.sort((a, b) => a.receiptDate.getTime() - b.receiptDate.getTime());
+	const shopOrdersCents = orders.reduce((sum, o) => sum + o.goodsCents, 0);
+	const shopOrdersCount = orders.length;
 	const handmadeCod = await db.courierPayoutLine.aggregate({
 		where: { kind: 'other', payout: { companyId, payoutDate: { gte: from, lte: to } } },
 		_sum: { amountCents: true },
@@ -71,7 +72,8 @@ async function reconcile(companyId: string, from: Date, to: Date, cashSalesCents
 		handmadeCodCents: handmadeCod._sum.amountCents ?? 0,
 		handmadeCodCount: handmadeCod._count,
 		cashSalesCents,
-		expectedCents: expected
+		expectedCents: expected,
+		orders
 	};
 }
 
@@ -129,6 +131,42 @@ export const load: PageServerLoad = async ({ parent }) => {
 };
 
 export const actions: Actions = {
+	setReceiptDate: async ({ request, locals, getClientAddress }) => {
+		if (!locals.user || !canManage(locals.user.role)) {
+			return fail(403, { error: 'Нямате права за тази операция.' });
+		}
+		const company = await getCompanyOrRedirect();
+		const formData = await request.formData();
+		const orderNumber = String(formData.get('orderNumber') ?? '').trim().replace(/^#/, '');
+		const dateText = String(formData.get('receiptDate') ?? '');
+		const receiptDate = dateText ? toDate(dateText) : null;
+		if (dateText && !receiptDate) {
+			return fail(422, { error: 'Невалидна дата.' });
+		}
+
+		const order = await db.shopOrder.findFirst({
+			where: { companyId: company.id, orderNumber },
+			select: { id: true, receiptDate: true }
+		});
+		if (!order) {
+			return fail(404, { error: `Поръчка #${orderNumber} не е синхронизирана.` });
+		}
+		await db.shopOrder.update({ where: { id: order.id }, data: { receiptDate } });
+
+		await logAuditEvent({
+			actorUserId: locals.user.id,
+			eventType: 'shop_order_receipt_date_set',
+			entityType: 'shop_order',
+			entityId: order.id,
+			oldValueJson: { receiptDate: order.receiptDate },
+			newValueJson: { orderNumber, receiptDate },
+			ipAddress: getClientAddress(),
+			userAgent: request.headers.get('user-agent') ?? undefined
+		});
+
+		return { success: receiptDate ? `Датата на бележката за #${orderNumber} е записана.` : `Датата на бележката за #${orderNumber} е изчистена.` };
+	},
+
 	save: async ({ request, locals, getClientAddress }) => {
 		if (!locals.user || !canManage(locals.user.role)) {
 			return fail(403, { error: 'Нямате права за тази операция.' });

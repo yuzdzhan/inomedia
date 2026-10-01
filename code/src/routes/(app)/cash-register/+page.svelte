@@ -183,5 +183,27 @@
 			</tbody>
 		</table>
 		{#if r.notes}<div class="muted" style="padding:8px 16px; font-size:12px;">{r.notes}</div>{/if}
+		<details style="padding:8px 16px 12px;">
+			<summary class="muted" style="cursor:pointer; font-size:12px;">Поръчки в сверката ({rec.orders.length}) и дата на бележка</summary>
+			<table class="tbl" style="margin-top:8px;">
+				<thead><tr><th>Поръчка</th><th>Бележка</th><th class="num">Стока без доставка</th></tr></thead>
+				<tbody>
+					{#each rec.orders as o}
+						<tr>
+							<td>#{o.orderNumber}</td>
+							<td>{formatDate(o.receiptDate)} {#if o.receiptDateSet}<span class="muted" style="font-size:11px;">(ръчно)</span>{/if}</td>
+							<td class="num amount">{formatAmount(o.goodsCents)}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+			<form method="POST" action="?/setReceiptDate" use:enhance style="display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap;">
+				<span class="muted" style="font-size:12px;">Бележката е пусната на друга дата:</span>
+				<input class="input" name="orderNumber" placeholder="№ поръчка" style="width:120px;" required />
+				<input class="input" type="date" name="receiptDate" style="width:auto;" />
+				<button class="btn btn-secondary btn-sm" type="submit">Запиши</button>
+				<span class="muted" style="font-size:11px;">Празна дата = по датата на завършване.</span>
+			</form>
+		</details>
 	</div>
 {/each}
