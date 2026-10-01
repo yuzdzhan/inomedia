@@ -31,27 +31,43 @@ const toDate = (value: FormDataEntryValue | null) => {
 	return /^\d{4}-\d{2}-\d{2}$/.test(text) ? new Date(`${text}T00:00:00Z`) : null;
 };
 
-/** What the register's turnover should be made of, for one period. */
+/**
+ * What the register's turnover should be made of, for one period.
+ * A receipt is issued for the goods only (the customer pays shipping to the
+ * courier) when the order is marked completed, so shop orders count by their
+ * completion date and without shipping.
+ */
 async function reconcile(companyId: string, from: Date, to: Date, cashSalesCents: number) {
 	const toExclusive = new Date(to.getTime() + 86400_000);
-	const orders = await db.shopOrder.aggregate({
+	// Completion happens after creation; look back far enough to catch late completions.
+	const candidates = await db.shopOrder.findMany({
 		where: {
 			companyId,
-			orderDate: { gte: from, lt: toExclusive },
+			orderDate: { gte: new Date(from.getTime() - 60 * 86400_000), lt: toExclusive },
 			status: { notIn: NON_SALE_STATUSES }
 		},
-		_sum: { totalCents: true },
-		_count: true
+		select: { totalCents: true, rawJson: true }
 	});
+	let shopOrdersCents = 0;
+	let shopOrdersCount = 0;
+	for (const o of candidates) {
+		const raw = o.rawJson as { date_completed?: string | null; shipping_total?: string; shipping_tax?: string };
+		if (!raw.date_completed) continue;
+		const completed = new Date(`${raw.date_completed.slice(0, 10)}T00:00:00Z`);
+		if (completed < from || completed >= toExclusive) continue;
+		const shipping = Math.round((parseFloat(raw.shipping_total ?? '0') + parseFloat(raw.shipping_tax ?? '0')) * 100);
+		shopOrdersCents += o.totalCents - shipping;
+		shopOrdersCount++;
+	}
 	const handmadeCod = await db.courierPayoutLine.aggregate({
 		where: { kind: 'other', payout: { companyId, payoutDate: { gte: from, lte: to } } },
 		_sum: { amountCents: true },
 		_count: true
 	});
-	const expected = (orders._sum.totalCents ?? 0) + (handmadeCod._sum.amountCents ?? 0) + cashSalesCents;
+	const expected = shopOrdersCents + (handmadeCod._sum.amountCents ?? 0) + cashSalesCents;
 	return {
-		shopOrdersCents: orders._sum.totalCents ?? 0,
-		shopOrdersCount: orders._count,
+		shopOrdersCents,
+		shopOrdersCount,
 		handmadeCodCents: handmadeCod._sum.amountCents ?? 0,
 		handmadeCodCount: handmadeCod._count,
 		cashSalesCents,

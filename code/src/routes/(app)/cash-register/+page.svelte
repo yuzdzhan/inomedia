@@ -173,7 +173,7 @@
 		<table class="tbl">
 			<tbody>
 				<tr><td>Оборот по касов апарат (ДДС {formatAmount(r.totalVatCents)}{r.stornoTurnoverCents ? `, сторно ${formatAmount(r.stornoTurnoverCents)}` : ''})</td><td class="num amount">{formatAmount(r.totalTurnoverCents)}</td></tr>
-				<tr><td class="muted">Поръчки inobags.com през периода ({rec.shopOrdersCount})</td><td class="num amount muted">{formatAmount(rec.shopOrdersCents)}</td></tr>
+				<tr><td class="muted">Поръчки inobags.com, завършени през периода, без доставка ({rec.shopOrdersCount})</td><td class="num amount muted">{formatAmount(rec.shopOrdersCents)}</td></tr>
 				<tr><td class="muted">Ръчна изработка с наложен платеж ({rec.handmadeCodCount} пратки)</td><td class="num amount muted">{formatAmount(rec.handmadeCodCents)}</td></tr>
 				<tr><td class="muted">Ръчна изработка в брой</td><td class="num amount muted">{formatAmount(rec.cashSalesCents)}</td></tr>
 				<tr>
