@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ActionData, PageData } from './$types';
+	import { enhance } from '$app/forms';
 	import Icon from '$lib/components/Icon.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -37,6 +38,13 @@
 			{data.summary.taskCount} задачи готови ·
 			{fmtMoney(data.summary.totalAmountCents)} общо
 		</p>
+		{#if data.summary.excludedProjectCount > 0}
+			<p class="page-sub" style="color:var(--warning, #ca8a04);">
+				Изключени от фактуриране: {data.summary.excludedProjectCount}
+				{data.summary.excludedProjectCount === 1 ? 'проект' : 'проекта'} ·
+				<span class="amount" style="font-weight:600;">{fmtMoney(data.summary.excludedAmountCents)}</span> за вземане
+			</p>
+		{/if}
 	</div>
 	<div class="page-header-actions">
 		<button class="btn btn-secondary btn-sm"><Icon name="filter" size={13}/>Филтри</button>
@@ -99,29 +107,46 @@
 						</span>
 					</div>
 					<div class="col" style="align-items:flex-end;">
-						<span class="amount" style="font-size:16px; font-weight:600;">{fmtMoney(clientGroup.totalAmountCents)}</span>
-						<span class="muted" style="font-size:11px;">незафактурирано</span>
+						<span class="amount" style="font-size:16px; font-weight:600;">{fmtMoney(clientGroup.includedAmountCents)}</span>
+						<span class="muted" style="font-size:11px;">за фактуриране</span>
+						{#if clientGroup.excludedAmountCents > 0}
+							<span class="amount" style="font-size:11px; color:var(--warning, #ca8a04);">
+								+ {fmtMoney(clientGroup.excludedAmountCents)} изключени
+							</span>
+						{/if}
 					</div>
 					{#if data.permissions.canCreateDrafts}
 						<form method="POST" action="?/createDraft">
 							<input type="hidden" name="clientId" value={clientGroup.id} />
-							{#each clientGroup.projects as pg}
+							{#each clientGroup.projects.filter((pg) => !pg.excludedFromInvoicing) as pg}
 								{#each pg.items as item}
 									<input type="hidden" name="taskIds" value={item.id} />
 								{/each}
 							{/each}
-							<button type="submit" class="btn btn-accent btn-sm"><Icon name="plus" size={12}/>Създай фактура</button>
+							<button type="submit" class="btn btn-accent btn-sm" disabled={clientGroup.includedAmountCents <= 0}><Icon name="plus" size={12}/>Създай фактура</button>
 						</form>
 					{/if}
 				</div>
 
 				<!-- Projects -->
 				{#each clientGroup.projects as projectGroup}
-					<div style="border-top:1px solid var(--border-soft);">
+					<div style="border-top:1px solid var(--border-soft);{projectGroup.excludedFromInvoicing ? ' opacity:0.55;' : ''}">
 						<div style="padding:8px 16px; background:var(--surface); display:flex; align-items:center; gap:10px; font-size:12px;">
 							<Icon name="folder" size={12}/>
 							<span style="font-weight:600;">{projectGroup.name}</span>
 							<span class="amount muted" style="font-size:11px;">{fmtMoney(projectGroup.totalAmountCents)}</span>
+							{#if projectGroup.excludedFromInvoicing}
+								<span class="badge outline" style="font-size:10px;">Изключен от фактурата</span>
+							{/if}
+							{#if data.permissions.canCreateDrafts}
+								<form method="POST" action="?/setProjectExclusion" use:enhance style="margin-left:auto;">
+									<input type="hidden" name="projectId" value={projectGroup.id} />
+									<input type="hidden" name="excluded" value={projectGroup.excludedFromInvoicing ? 'false' : 'true'} />
+									<button type="submit" class="btn btn-ghost btn-sm" style="font-size:11px;">
+										{projectGroup.excludedFromInvoicing ? 'Включи във фактурата' : 'Изключи от фактурата'}
+									</button>
+								</form>
+							{/if}
 						</div>
 
 						{#each projectGroup.items as item}

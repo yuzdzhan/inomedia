@@ -76,6 +76,7 @@ async function getInvoiceableContext(user: { id: string; role: string }, url: UR
 			id: true,
 			name: true,
 			clientId: true,
+			excludedFromInvoicing: true,
 			client: {
 				select: {
 					id: true,
@@ -246,6 +247,7 @@ async function getInvoiceableContext(user: { id: string; role: string }, url: UR
 					return {
 						id: project.id,
 						name: project.name,
+						excludedFromInvoicing: project.excludedFromInvoicing,
 						totalAmountCents: items.reduce((sum, item) => sum + item.amountCents, 0),
 						items
 					};
@@ -256,17 +258,27 @@ async function getInvoiceableContext(user: { id: string; role: string }, url: UR
 				return null;
 			}
 
+			const includedProjects = projects.filter((project) => !project.excludedFromInvoicing);
+			const excludedProjects = projects.filter((project) => project.excludedFromInvoicing);
+
 			return {
 				id: client.id,
 				legalName: client.legalName,
 				defaultPaymentTermDays: client.defaultPaymentTermDays,
 				totalAmountCents: projects.reduce((sum, project) => sum + project.totalAmountCents, 0),
-				projects
+				includedAmountCents: includedProjects.reduce((sum, project) => sum + project.totalAmountCents, 0),
+				excludedAmountCents: excludedProjects.reduce((sum, project) => sum + project.totalAmountCents, 0),
+				projects: [...includedProjects, ...excludedProjects]
 			};
 		})
 		.filter((client) => client !== null);
 
 	// Load users for userId filter (admin/manager only)
+	const excludedProjectIds = new Set(
+		visibleProjects.filter((project) => project.excludedFromInvoicing).map((project) => project.id)
+	);
+	const excludedItems = invoiceableItems.filter((item) => excludedProjectIds.has(item.projectId));
+
 	const users =
 		user.role === 'admin' || user.role === 'manager'
 			? await db.user.findMany({
@@ -294,7 +306,9 @@ async function getInvoiceableContext(user: { id: string; role: string }, url: UR
 		summary: {
 			taskCount: invoiceableItems.length,
 			totalAmountCents: invoiceableItems.reduce((sum, item) => sum + item.amountCents, 0),
-			totalUninvoicedMinutes: invoiceableItems.reduce((sum, item) => sum + item.uninvoicedMinutes, 0)
+			totalUninvoicedMinutes: invoiceableItems.reduce((sum, item) => sum + item.uninvoicedMinutes, 0),
+			excludedAmountCents: excludedItems.reduce((sum, item) => sum + item.amountCents, 0),
+			excludedProjectCount: new Set(excludedItems.map((item) => item.projectId)).size
 		},
 		permissions: {
 			canCreateDrafts: canAccessInvoiceDrafting(user.role)
@@ -318,6 +332,44 @@ export const load: PageServerLoad = async ({ parent, url }) => {
 };
 
 export const actions: Actions = {
+	setProjectExclusion: async ({ request, locals, getClientAddress }) => {
+		if (!locals.user || !canAccessInvoiceDrafting(locals.user.role)) {
+			return fail(403, { createDraftError: 'Нямате права за тази операция.' });
+		}
+
+		const formData = await request.formData();
+		const projectId = String(formData.get('projectId') ?? '');
+		const excluded = formData.get('excluded') === 'true';
+
+		const project = await db.project.findUnique({
+			where: { id: projectId },
+			select: { id: true, excludedFromInvoicing: true }
+		});
+		if (!project) {
+			return fail(404, { createDraftError: 'Проектът не е намерен.' });
+		}
+
+		if (project.excludedFromInvoicing !== excluded) {
+			await db.project.update({
+				where: { id: project.id },
+				data: { excludedFromInvoicing: excluded }
+			});
+
+			await logAuditEvent({
+				actorUserId: locals.user.id,
+				eventType: excluded ? 'project_excluded_from_invoicing' : 'project_included_in_invoicing',
+				entityType: 'project',
+				entityId: project.id,
+				oldValueJson: { excludedFromInvoicing: project.excludedFromInvoicing },
+				newValueJson: { excludedFromInvoicing: excluded },
+				ipAddress: getClientAddress(),
+				userAgent: request.headers.get('user-agent') ?? undefined
+			});
+		}
+
+		return { exclusionUpdated: true };
+	},
+
 	createDraft: async ({ request, locals, getClientAddress, url }) => {
 		if (!locals.user || !canAccessInvoiceDrafting(locals.user.role)) {
 			return fail(403, { createDraftError: 'Нямате права за тази операция.' });
@@ -336,8 +388,14 @@ export const actions: Actions = {
 		}
 
 		const context = await getInvoiceableContext(user, url);
+		const excludedProjectIds = new Set(
+			context.projects.filter((project) => project.excludedFromInvoicing).map((project) => project.id)
+		);
 		const selectableItems = context.invoiceableItems.filter(
-			(item) => item.clientId === clientId && selectedTaskIds.includes(item.id)
+			(item) =>
+				item.clientId === clientId &&
+				selectedTaskIds.includes(item.id) &&
+				!excludedProjectIds.has(item.projectId)
 		);
 
 		if (selectableItems.length !== selectedTaskIds.length) {

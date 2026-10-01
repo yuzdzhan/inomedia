@@ -717,6 +717,7 @@ export const actions: Actions = {
 					project: {
 						clientId: draft.clientId,
 						isBillable: true,
+						excludedFromInvoicing: false,
 						client: { companyId: company.id }
 					}
 				},
