@@ -4,6 +4,7 @@ import { logAuditEvent } from './audit';
 import {
 	courierConfigured,
 	fetchEcontPayouts,
+	fetchEcontShipments,
 	fetchSpeedyPayouts,
 	type NormalizedPayout
 } from './couriers';
@@ -127,14 +128,41 @@ export async function syncShopOrders(companyId: string, after: Date, before: Dat
 	return { count: orders.length, errors };
 }
 
-/** Links unresolved payout lines to shop orders by waybill number, then by the order number the courier carries. */
+const normalize = (text: string) => text.toLocaleLowerCase('bg').replace(/[^\p{L}\s]/gu, ' ').trim();
+
+/** "А. Лилина" vs "Ани Лилина": same surname and first-name initial. */
+function receiverMatches(receiver: string, customerName: string) {
+	const r = normalize(receiver).split(/\s+/);
+	const c = normalize(customerName).split(/\s+/);
+	if (r.length < 2 || c.length < 2) return false;
+	return r[r.length - 1] === c[c.length - 1] && c[0].startsWith(r[0][0]);
+}
+
+/** Share of the shipment description's words found in the order's product names. */
+function descriptionScore(description: string | null, raw: unknown) {
+	if (!description) return 0;
+	const items = ((raw as { line_items?: Array<{ name?: string }> })?.line_items ?? []).map((i) => i.name ?? '').join(' ');
+	const words = normalize(description).split(/\s+/).filter((w) => w.length > 2);
+	const haystack = normalize(items);
+	return words.length ? words.filter((w) => haystack.includes(w)).length / words.length : 0;
+}
+
+/**
+ * Links unresolved payout lines to shop orders:
+ * 1. by waybill number stored on the order,
+ * 2. by the order number the courier carries (Speedy ref1),
+ * 3. for Econt (whose current plugin stores no waybill on the order): by the
+ *    receiver's surname and initial from Econt's tracking, an order placed up to
+ *    21 days before delivery, and the product description as tie-breaker.
+ */
 export async function linkPayoutLinesToOrders(companyId: string) {
 	const lines = await db.courierPayoutLine.findMany({
 		where: { kind: 'unresolved', payout: { companyId } },
-		select: { id: true, waybillNumber: true, reference: true }
+		select: { id: true, waybillNumber: true, reference: true, payout: { select: { courier: true } } }
 	});
 
 	let linked = 0;
+	const econtLeft: typeof lines = [];
 	for (const line of lines) {
 		const order =
 			(await db.shopOrder.findFirst({
@@ -147,10 +175,57 @@ export async function linkPayoutLinesToOrders(companyId: string) {
 						select: { id: true }
 					})
 				: null);
-		if (!order) continue;
+		if (!order) {
+			if (line.payout.courier === 'econt') econtLeft.push(line);
+			continue;
+		}
 		await db.courierPayoutLine.update({
 			where: { id: line.id },
 			data: { kind: 'shop_order', shopOrderId: order.id }
+		});
+		linked++;
+	}
+
+	if (econtLeft.length === 0 || !courierConfigured('econt')) return linked;
+
+	const shipments = await fetchEcontShipments(econtLeft.map((l) => l.waybillNumber));
+	for (const shipment of shipments) {
+		const line = econtLeft.find((l) => l.waybillNumber === shipment.waybillNumber)!;
+		await db.courierPayoutLine.update({
+			where: { id: line.id },
+			data: {
+				recipient: shipment.receiverName,
+				deliveryDate: shipment.deliveryDate ? dateOnly(shipment.deliveryDate) : undefined
+			}
+		});
+		if (!shipment.receiverName || !shipment.deliveryDate) continue;
+
+		const delivered = dateOnly(shipment.deliveryDate);
+		const candidates = (
+			await db.shopOrder.findMany({
+				where: {
+					companyId,
+					OR: [{ courier: null }, { courier: 'econt' }],
+					orderDate: { gte: new Date(delivered.getTime() - 21 * 86400_000), lt: new Date(delivered.getTime() + 86400_000) },
+					status: { notIn: ['cancelled', 'failed', 'refunded', 'trash'] },
+					payoutLines: { none: {} }
+				},
+				select: { id: true, customerName: true, rawJson: true }
+			})
+		).filter((o) => receiverMatches(shipment.receiverName!, o.customerName));
+
+		let order = candidates.length === 1 ? candidates[0] : null;
+		if (candidates.length > 1) {
+			const scored = candidates
+				.map((o) => ({ o, score: descriptionScore(shipment.description, o.rawJson) }))
+				.sort((a, b) => b.score - a.score);
+			if (scored[0].score > scored[1].score) order = scored[0].o;
+		}
+		if (!order) continue;
+
+		await db.courierPayoutLine.update({
+			where: { id: line.id },
+			data: { kind: 'shop_order', shopOrderId: order.id, note: 'Свързана по получател (Еконт)' }
 		});
 		linked++;
 	}

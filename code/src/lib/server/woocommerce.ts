@@ -59,7 +59,8 @@ export function parseWooOrder(order: WooOrder): ParsedWooOrder {
 	const econtLabel = meta(order, 'woo_bg_econt_label') as { label?: { shipmentNumber?: string } } | undefined;
 	const speedyLabel = meta(order, 'woo_bg_speedy_label') as { id?: string | number } | undefined;
 	const econtWaybill = econtLabel?.label?.shipmentNumber;
-	const speedyWaybill = speedyLabel?.id;
+	// Since 08.2026 Speedy labels come from a different plugin that stores `_speedy_awb`.
+	const speedyWaybill = speedyLabel?.id ?? (meta(order, '_speedy_awb') as string | undefined);
 
 	const attachment = Number(meta(order, 'woo_bg_order_document'));
 	const docNumber = meta(order, 'woo_bg_order_number');

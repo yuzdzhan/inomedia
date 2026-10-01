@@ -148,3 +148,41 @@ export async function fetchSpeedyPayouts(dateFrom: string, dateTo: string): Prom
 			raw: p
 		}));
 }
+
+export type EcontShipmentInfo = {
+	waybillNumber: string;
+	/** "А. Лилина" — first-name initial and surname */
+	receiverName: string | null;
+	description: string | null;
+	deliveryDate: string | null;
+};
+
+/** Receiver and contents of Econt shipments; the payout report carries only waybill numbers. */
+export async function fetchEcontShipments(waybills: string[]): Promise<EcontShipmentInfo[]> {
+	if (waybills.length === 0) return [];
+	const auth = Buffer.from(`${env.ECONT_USERNAME}:${env.ECONT_PASSWORD}`).toString('base64');
+	const res = await fetch('https://ee.econt.com/services/Shipments/ShipmentService.getShipmentStatuses.json', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
+		body: JSON.stringify({ shipmentNumbers: waybills })
+	});
+	const body = await res.json().catch(() => null);
+	if (!res.ok) {
+		throw new Error(`Еконт: HTTP ${res.status}`);
+	}
+	type Status = {
+		shipmentNumber?: string;
+		shipmentDescription?: string;
+		deliveryTime?: number;
+		receiverClient?: { name?: string };
+	};
+	return ((body?.shipmentStatuses ?? []) as Array<{ status?: Status }>)
+		.map((r) => r.status)
+		.filter((s): s is Status => Boolean(s?.shipmentNumber))
+		.map((s) => ({
+			waybillNumber: s.shipmentNumber!,
+			receiverName: s.receiverClient?.name ?? null,
+			description: s.shipmentDescription ?? null,
+			deliveryDate: s.deliveryTime ? new Date(s.deliveryTime + 3 * 3600_000).toISOString().slice(0, 10) : null
+		}));
+}
