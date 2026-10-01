@@ -129,6 +129,8 @@ model Company {
   bankStatements       BankStatement[]
   courierPayouts       CourierPayout[]
   cashRegisterReports  CashRegisterReport[]
+  inboxMessages        InboxMessage[]
+  inboxDocuments       InboxDocument[]
   shopOrders           ShopOrder[]
 }
 
@@ -676,6 +678,7 @@ model Expense {
   billableToInvoice   Boolean                   @default(false)
   invoicedAt          DateTime?
   attachments         ExpenseAttachment[]
+  inboxDocuments      InboxDocument[]
   customRow           InvoiceCustomRow?         @relation("ExpenseCustomRow")
   createdByUserId     String
   createdByUser       User                      @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
@@ -903,4 +906,63 @@ model CashRegisterReport {
 
   @@unique([companyId, periodFrom])
   @@map("cash_register_report")
+}
+
+enum InboxDocumentStatus {
+  pending
+  matched
+  cash_expense
+  duplicate
+  ignored
+}
+
+/// An e-mail received at invoices@ (read-only; never marked or deleted on the server).
+model InboxMessage {
+  id          String          @id @default(cuid())
+  companyId   String
+  company     Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  imapUid     Int
+  messageId   String
+  fromAddress String?
+  subject     String?
+  receivedAt  DateTime
+  documents   InboxDocument[]
+  createdAt   DateTime        @default(now())
+
+  @@unique([companyId, messageId])
+  @@map("inbox_message")
+}
+
+/// A document attached to an inbox e-mail, with what was read from it and where it went.
+model InboxDocument {
+  id             String              @id @default(cuid())
+  companyId      String
+  company        Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  messageId      String
+  message        InboxMessage        @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  filename       String
+  contentType    String
+  sizeBytes      Int
+  blob           Bytes
+  sha256         String
+  kind           String
+  supplier       String?
+  supplierId     String?
+  documentNumber String?
+  documentDate   DateTime?           @db.Date
+  totalCents     Int?
+  currency       String?
+  paidInCash     Boolean             @default(false)
+  period         String?
+  parsedJson     Json
+  status         InboxDocumentStatus @default(pending)
+  note           String?
+  expenseId      String?
+  expense        Expense?            @relation(fields: [expenseId], references: [id], onDelete: SetNull)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@unique([companyId, sha256])
+  @@index([companyId, status])
+  @@map("inbox_document")
 }

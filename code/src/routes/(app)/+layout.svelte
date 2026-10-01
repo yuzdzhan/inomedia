@@ -64,6 +64,13 @@
 			roles: ['admin', 'accountant']
 		},
 		{
+			id: 'inbox',
+			label: 'Входящи документи',
+			icon: 'paperclip',
+			href: '/inbox',
+			roles: ['admin', 'accountant']
+		},
+		{
 			id: 'expenses',
 			label: 'Разходи',
 			icon: 'file',
@@ -167,6 +174,7 @@
 		'/invoiceable-work': 'Фактурируема работа',
 		'/invoices': 'Фактури',
 		'/expenses': 'Разходи',
+		'/inbox': 'Входящи документи',
 		'/bank-statements': 'Банка и каса',
 		'/cod': 'Наложени платежи',
 		'/cash-register': 'Касов апарат',

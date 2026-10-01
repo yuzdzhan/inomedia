@@ -1,7 +1,13 @@
-import { building } from '$app/environment';
+import { building, dev } from '$app/environment';
 import { auth } from '$lib/server/auth';
+import { scheduleInboxSync } from '$lib/server/inbox/sync';
 import { svelteKitHandler } from 'better-auth/svelte-kit';
 import type { Handle } from '@sveltejs/kit';
+
+// Read invoices@ every 30 minutes in production.
+if (!building && !dev) {
+	scheduleInboxSync();
+}
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const session = await auth.api.getSession({ headers: event.request.headers });
