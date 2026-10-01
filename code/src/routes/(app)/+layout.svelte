@@ -81,6 +81,21 @@
 			roles: ['admin', 'accountant']
 		},
 		{
+			id: 'cod',
+			label: 'Наложени платежи',
+			icon: 'truck',
+			href: '/cod',
+			active: (p) => p.startsWith('/cod'),
+			roles: ['admin', 'accountant']
+		},
+		{
+			id: 'cash-register',
+			label: 'Касов апарат',
+			icon: 'printer',
+			href: '/cash-register',
+			roles: ['admin', 'accountant']
+		},
+		{
 			id: 'cashflow',
 			label: 'Паричен поток',
 			icon: 'activity',
@@ -146,6 +161,8 @@
 		'/invoices': 'Фактури',
 		'/expenses': 'Разходи',
 		'/bank-statements': 'Банка и каса',
+		'/cod': 'Наложени платежи',
+		'/cash-register': 'Касов апарат',
 		'/cashflow': 'Паричен поток',
 		'/reports/overview': 'Отчети',
 		'/reports/billing': 'Отчети',

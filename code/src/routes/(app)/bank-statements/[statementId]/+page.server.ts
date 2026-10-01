@@ -887,6 +887,11 @@ export const actions: Actions = {
 					if (income.ledgerEntry) {
 						await tx.ledgerEntry.delete({ where: { id: income.ledgerEntry.id } });
 					}
+					// A courier COD payout matched to this row goes back to unmatched with it
+					await tx.courierPayout.updateMany({
+						where: { statementRowId: rowId },
+						data: { statementRowId: null, standaloneIncomeId: null }
+					});
 					await tx.standaloneIncome.delete({ where: { id: income.id } });
 					await tx.bankStatementRow.update({
 						where: { id: rowId },

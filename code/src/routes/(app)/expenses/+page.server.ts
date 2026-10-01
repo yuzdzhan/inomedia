@@ -331,18 +331,60 @@ export const actions: Actions = {
 			if (!project) return fail(400, { createExpenseError: 'Невалиден проект.' });
 		}
 
-		const expense = await db.expense.create({
-			data: {
-				companyId: company.id,
-				categoryId: data.categoryId,
-				clientId: data.clientId ?? null,
-				projectId: data.projectId ?? null,
-				description: data.description,
-				amountCents: data.amountCents,
-				incurredDate: new Date(data.incurredDate),
-				billableToInvoice: data.clientId ? data.billableToInvoice : false,
-				createdByUserId: locals.user.id
+		// Paid on the spot in cash (e.g. a handwritten invoice): book it against the cashbox right away.
+		// Bank payments are not offered here — they arrive with the bank statement.
+		const paidFromCashbox = formData.get('paidFromCashbox') === 'on';
+		const cashbox = paidFromCashbox
+			? await db.moneyContainer.findUnique({
+					where: { companyId_containerType: { companyId: company.id, containerType: 'cashbox' } },
+					select: { id: true }
+				})
+			: null;
+		if (paidFromCashbox && !cashbox) {
+			return fail(404, { createExpenseError: 'Касата не е намерена. Моля, посетете Паричен поток първо.' });
+		}
+
+		const files = (formData.getAll('attachment') as File[]).filter((f) => f instanceof File && f.size > 0);
+		const attachments = await Promise.all(
+			files.map(async (f) => ({
+				originalFilename: f.name,
+				contentType: f.type || 'application/octet-stream',
+				sizeBytes: f.size,
+				blob: new Uint8Array(await f.arrayBuffer())
+			}))
+		);
+
+		const incurredDate = new Date(data.incurredDate);
+		const expense = await db.$transaction(async (tx) => {
+			const expense = await tx.expense.create({
+				data: {
+					companyId: company.id,
+					categoryId: data.categoryId,
+					clientId: data.clientId ?? null,
+					projectId: data.projectId ?? null,
+					description: data.description,
+					amountCents: data.amountCents,
+					incurredDate,
+					billableToInvoice: data.clientId ? data.billableToInvoice : false,
+					createdByUserId: locals.user!.id,
+					...(cashbox
+						? { status: 'paid' as const, paidDate: incurredDate, paidByUserId: locals.user!.id, paidContainerId: cashbox.id }
+						: {}),
+					attachments: { create: attachments }
+				}
+			});
+			if (cashbox) {
+				await createExpensePaymentLedgerEntry(
+					tx,
+					expense.id,
+					cashbox.id,
+					data.amountCents,
+					incurredDate,
+					data.description,
+					locals.user!.id
+				);
 			}
+			return expense;
 		});
 
 		await logAuditEvent({
@@ -356,7 +398,9 @@ export const actions: Actions = {
 				amountCents: data.amountCents,
 				incurredDate: data.incurredDate,
 				clientId: data.clientId,
-				projectId: data.projectId
+				projectId: data.projectId,
+				paidFromCashbox,
+				attachments: files.length
 			},
 			ipAddress: getClientAddress(),
 			userAgent: request.headers.get('user-agent') ?? undefined

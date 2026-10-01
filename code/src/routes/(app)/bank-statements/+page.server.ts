@@ -2,6 +2,7 @@ import { fail, redirect, error, isHttpError, isRedirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { logAuditEvent } from '$lib/server/audit';
 import { autoMatchStatementRows } from '$lib/server/statement-matching';
+import { matchPayoutsToStatementRows } from '$lib/server/cod-sync';
 import type { Actions, PageServerLoad } from './$types';
 
 function canManageStatements(role: string) {
@@ -224,6 +225,8 @@ export const actions: Actions = {
 		let matchResult = { matched: 0, unmatched: parsedRows.length };
 		if (parsedRows.length > 0 && parseStatus === 'ok') {
 			matchResult = await autoMatchStatementRows(statement.id, company.id, locals.user.id);
+			const codMatched = await matchPayoutsToStatementRows(company.id, locals.user.id);
+			matchResult = { matched: matchResult.matched + codMatched, unmatched: matchResult.unmatched - codMatched };
 		}
 
 		const matchSummary =

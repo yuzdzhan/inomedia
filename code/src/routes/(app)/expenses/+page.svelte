@@ -331,7 +331,7 @@
 				<h2 class="card-title">Нов разход</h2>
 			</div>
 			<div style="padding: 16px;">
-				<form method="POST" action="?/createExpense">
+				<form method="POST" action="?/createExpense" enctype="multipart/form-data">
 					<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
 						<div class="field">
 							<label class="label" for="create-categoryId">Категория</label>
@@ -413,6 +413,20 @@
 						<label class="label" for="create-description">Описание</label>
 						<textarea id="create-description" name="description" class="textarea" rows="3" required>{createFieldValue('description')}</textarea>
 						{#if createFieldError('description')}<span style="font-size: 11px; color: var(--danger);">{createFieldError('description')}</span>{/if}
+					</div>
+
+					<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px;">
+						<div class="field">
+							<label class="label" for="create-attachment">Документ (фактура, снимка)</label>
+							<input id="create-attachment" type="file" name="attachment" class="input" accept="image/*,application/pdf" multiple />
+						</div>
+						<div class="field" style="justify-content: flex-end;">
+							<label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px;">
+								<input type="checkbox" name="paidFromCashbox" style="width:16px; height:16px;" />
+								Платен в брой от касата
+							</label>
+							<span class="muted" style="font-size:11px;">Плащанията по банка се свързват от банковото извлечение.</span>
+						</div>
 					</div>
 
 					{#if createClientId}

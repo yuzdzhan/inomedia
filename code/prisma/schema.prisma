@@ -10,43 +10,43 @@ datasource db {
 // ─── better-auth required tables ───────────────────────────────────────────
 
 model User {
-  id              String   @id @default(cuid())
-  name            String
-  email           String   @unique
-  emailVerified   Boolean  @default(false)
-  image           String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   // Domain fields
-  firstName       String   @default("")
-  lastName        String   @default("")
-  role            UserRole @default(employee)
+  firstName       String     @default("")
+  lastName        String     @default("")
+  role            UserRole   @default(employee)
   status          UserStatus @default(active)
   hourlyRateCents Int?
   deactivatedAt   DateTime?
 
-  sessions        Session[]
-  accounts        Account[]
-  auditEvents     AuditEvent[] @relation("AuditActor")
-  managedProjects Project[]    @relation("ProjectPrimaryManager")
-  projectMemberships ProjectMember[]
-  createdTasks    Task[]       @relation("TaskCreatedBy")
-  taskComments    TaskComment[] @relation("TaskCommentAuthor")
-  deletedTaskComments TaskComment[] @relation("TaskCommentDeletedBy")
-  taskAssignments TaskAssignment[]
-  uploadedTaskAttachments TaskAttachment[] @relation("TaskAttachmentUploader")
-  taskTimeLogs    TaskTimeLog[]
-  createdInvoices Invoice[]
-  rateHistoryEntries UserRateHistory[]
+  sessions                     Session[]
+  accounts                     Account[]
+  auditEvents                  AuditEvent[]                        @relation("AuditActor")
+  managedProjects              Project[]                           @relation("ProjectPrimaryManager")
+  projectMemberships           ProjectMember[]
+  createdTasks                 Task[]                              @relation("TaskCreatedBy")
+  taskComments                 TaskComment[]                       @relation("TaskCommentAuthor")
+  deletedTaskComments          TaskComment[]                       @relation("TaskCommentDeletedBy")
+  taskAssignments              TaskAssignment[]
+  uploadedTaskAttachments      TaskAttachment[]                    @relation("TaskAttachmentUploader")
+  taskTimeLogs                 TaskTimeLog[]
+  createdInvoices              Invoice[]
+  rateHistoryEntries           UserRateHistory[]
   projectBillableRateOverrides ProjectMemberBillableRateOverride[]
-  recordedPayments InvoicePayment[] @relation("InvoicePaymentRecordedBy")
-  createdExpenses Expense[] @relation("ExpenseCreatedBy")
-  paidExpenses    Expense[] @relation("ExpensePaidBy")
-  createdRecurringTemplates RecurringExpenseTemplate[] @relation("RecurringTemplateCreatedBy")
-  ledgerEntries   LedgerEntry[]    @relation("LedgerEntryCreatedBy")
-  standaloneIncomes StandaloneIncome[] @relation("StandaloneIncomeCreatedBy")
-  importedBankStatements BankStatement[] @relation("BankStatementImporter")
+  recordedPayments             InvoicePayment[]                    @relation("InvoicePaymentRecordedBy")
+  createdExpenses              Expense[]                           @relation("ExpenseCreatedBy")
+  paidExpenses                 Expense[]                           @relation("ExpensePaidBy")
+  createdRecurringTemplates    RecurringExpenseTemplate[]          @relation("RecurringTemplateCreatedBy")
+  ledgerEntries                LedgerEntry[]                       @relation("LedgerEntryCreatedBy")
+  standaloneIncomes            StandaloneIncome[]                  @relation("StandaloneIncomeCreatedBy")
+  importedBankStatements       BankStatement[]                     @relation("BankStatementImporter")
 
   @@map("user")
 }
@@ -98,9 +98,9 @@ model Verification {
 // ─── Domain tables ─────────────────────────────────────────────────────────
 
 model Company {
-  id                     String            @id @default(cuid())
+  id                     String   @id @default(cuid())
   legalName              String
-  eikBulstat             String            @unique
+  eikBulstat             String   @unique
   vatNumber              String?
   registeredAddress      String
   molName                String
@@ -110,23 +110,26 @@ model Company {
   bankName               String?
   bankIban               String?
   bankBic                String?
-  defaultPaymentTermDays Int               @default(30)
-  vatRegistered          Boolean           @default(true)
-  vatRateBasisPoints     Int               @default(2000)
-  currency               String            @default("EUR")
-  timezone               String            @default("Europe/Sofia")
-  invoiceNextNumber      Int               @default(1)
-  createdAt              DateTime          @default(now())
-  updatedAt              DateTime          @updatedAt
+  defaultPaymentTermDays Int      @default(30)
+  vatRegistered          Boolean  @default(true)
+  vatRateBasisPoints     Int      @default(2000)
+  currency               String   @default("EUR")
+  timezone               String   @default("Europe/Sofia")
+  invoiceNextNumber      Int      @default(1)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
-  clients                Client[]
-  expenseCategories      ExpenseCategory[]
-  expenses               Expense[]
-  recurringTemplates     RecurringExpenseTemplate[]
-  ownedTaskAttachments   TaskAttachment[] @relation("TaskAttachmentOwnerCompany")
-  moneyContainers        MoneyContainer[]
-  standaloneIncomes      StandaloneIncome[]
-  bankStatements         BankStatement[]
+  clients              Client[]
+  expenseCategories    ExpenseCategory[]
+  expenses             Expense[]
+  recurringTemplates   RecurringExpenseTemplate[]
+  ownedTaskAttachments TaskAttachment[]           @relation("TaskAttachmentOwnerCompany")
+  moneyContainers      MoneyContainer[]
+  standaloneIncomes    StandaloneIncome[]
+  bankStatements       BankStatement[]
+  courierPayouts       CourierPayout[]
+  cashRegisterReports  CashRegisterReport[]
+  shopOrders           ShopOrder[]
 }
 
 model AuditEvent {
@@ -238,40 +241,40 @@ enum LedgerEntryType {
 }
 
 model MoneyContainer {
-  id                  String              @id @default(cuid())
+  id                  String             @id @default(cuid())
   companyId           String
-  company             Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company             Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
   containerType       MoneyContainerType
   name                String
-  openingBalanceCents Int                 @default(0)
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
+  openingBalanceCents Int                @default(0)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
   ledgerEntries       LedgerEntry[]
   standaloneIncomes   StandaloneIncome[]
-  paidExpenses        Expense[]           @relation("ExpensePaidFromContainer")
+  paidExpenses        Expense[]          @relation("ExpensePaidFromContainer")
 
   @@unique([companyId, containerType])
   @@map("money_container")
 }
 
 model LedgerEntry {
-  id                  String            @id @default(cuid())
-  containerId         String
-  container           MoneyContainer    @relation(fields: [containerId], references: [id], onDelete: Restrict)
-  entryType           LedgerEntryType
-  amountCents         Int
-  entryDate           DateTime          @db.Date
-  description         String
-  invoicePaymentId    String?           @unique
-  invoicePayment      InvoicePayment?   @relation(fields: [invoicePaymentId], references: [id], onDelete: SetNull)
-  standaloneIncomeId  String?           @unique
-  standaloneIncome    StandaloneIncome? @relation(fields: [standaloneIncomeId], references: [id], onDelete: SetNull)
-  expenseId           String?           @unique
-  expense             Expense?          @relation("ExpenseLedgerEntry", fields: [expenseId], references: [id], onDelete: SetNull)
-  transferPairId      String?
-  createdByUserId     String
-  createdByUser       User              @relation("LedgerEntryCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
-  createdAt           DateTime          @default(now())
+  id                 String            @id @default(cuid())
+  containerId        String
+  container          MoneyContainer    @relation(fields: [containerId], references: [id], onDelete: Restrict)
+  entryType          LedgerEntryType
+  amountCents        Int
+  entryDate          DateTime          @db.Date
+  description        String
+  invoicePaymentId   String?           @unique
+  invoicePayment     InvoicePayment?   @relation(fields: [invoicePaymentId], references: [id], onDelete: SetNull)
+  standaloneIncomeId String?           @unique
+  standaloneIncome   StandaloneIncome? @relation(fields: [standaloneIncomeId], references: [id], onDelete: SetNull)
+  expenseId          String?           @unique
+  expense            Expense?          @relation("ExpenseLedgerEntry", fields: [expenseId], references: [id], onDelete: SetNull)
+  transferPairId     String?
+  createdByUserId    String
+  createdByUser      User              @relation("LedgerEntryCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdAt          DateTime          @default(now())
 
   @@index([containerId, entryDate])
   @@index([transferPairId])
@@ -279,23 +282,25 @@ model LedgerEntry {
 }
 
 model StandaloneIncome {
-  id                  String         @id @default(cuid())
-  companyId           String
-  company             Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  containerId         String
-  container           MoneyContainer @relation(fields: [containerId], references: [id], onDelete: Restrict)
-  description         String
-  amountCents         Int
-  incomeDate          DateTime       @db.Date
-  notes               String?
-  source              String?
-  createdByUserId     String
-  createdByUser       User           @relation("StandaloneIncomeCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
-  ledgerEntry         LedgerEntry?
-  statementRows       BankStatementRow[]
-  attachments         StandaloneIncomeAttachment[]
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
+  id                 String                       @id @default(cuid())
+  companyId          String
+  company            Company                      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  containerId        String
+  container          MoneyContainer               @relation(fields: [containerId], references: [id], onDelete: Restrict)
+  description        String
+  amountCents        Int
+  incomeDate         DateTime                     @db.Date
+  notes              String?
+  source             String?
+  createdByUserId    String
+  createdByUser      User                         @relation("StandaloneIncomeCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  ledgerEntry        LedgerEntry?
+  statementRows      BankStatementRow[]
+  attachments        StandaloneIncomeAttachment[]
+  courierPayout      CourierPayout?
+  cashRegisterReport CashRegisterReport?
+  createdAt          DateTime                     @default(now())
+  updatedAt          DateTime                     @updatedAt
 
   @@index([companyId, incomeDate])
   @@map("standalone_income")
@@ -316,25 +321,25 @@ model StandaloneIncomeAttachment {
 }
 
 model Client {
-  id                String       @id @default(cuid())
-  companyId         String
-  company           Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  legalName         String
-  registrationNumber String?
-  vatNumber         String?
-  billingAddress    String?
-  mol               String?
+  id                     String       @id @default(cuid())
+  companyId              String
+  company                Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  legalName              String
+  registrationNumber     String?
+  vatNumber              String?
+  billingAddress         String?
+  mol                    String?
   defaultPaymentTermDays Int?
-  isInternal        Boolean      @default(false)
-  isProtectedSystem Boolean      @default(false)
-  status            ClientStatus @default(active)
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+  isInternal             Boolean      @default(false)
+  isProtectedSystem      Boolean      @default(false)
+  status                 ClientStatus @default(active)
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
 
-  contacts          ClientContact[]
-  projects          Project[]
-  invoices          Invoice[]
-  expenses          Expense[]
+  contacts           ClientContact[]
+  projects           Project[]
+  invoices           Invoice[]
+  expenses           Expense[]
   recurringTemplates RecurringExpenseTemplate[]
 
   @@unique([companyId, legalName])
@@ -342,39 +347,39 @@ model Client {
 }
 
 model ClientContact {
-  id         String   @id @default(cuid())
-  clientId   String
-  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  name       String
-  email      String?
-  phone      String?
-  roleTitle  String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(cuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name      String
+  email     String?
+  phone     String?
+  roleTitle String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("client_contact")
 }
 
 model Project {
-  id                   String        @id @default(cuid())
-  clientId             String
-  client               Client        @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  name                 String
-  description          String?
-  status               ProjectStatus @default(active)
-  primaryManagerUserId String
-  primaryManager       User          @relation("ProjectPrimaryManager", fields: [primaryManagerUserId], references: [id], onDelete: Restrict)
-  budgetAmountCents    Int?
-  retainerAmountCents  Int?
-  isBillable           Boolean       @default(true)
-  excludedFromInvoicing Boolean      @default(false)
-  createdAt            DateTime      @default(now())
-  updatedAt            DateTime      @updatedAt
-  members              ProjectMember[]
-  taskLists            TaskList[]
+  id                          String                              @id @default(cuid())
+  clientId                    String
+  client                      Client                              @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  name                        String
+  description                 String?
+  status                      ProjectStatus                       @default(active)
+  primaryManagerUserId        String
+  primaryManager              User                                @relation("ProjectPrimaryManager", fields: [primaryManagerUserId], references: [id], onDelete: Restrict)
+  budgetAmountCents           Int?
+  retainerAmountCents         Int?
+  isBillable                  Boolean                             @default(true)
+  excludedFromInvoicing       Boolean                             @default(false)
+  createdAt                   DateTime                            @default(now())
+  updatedAt                   DateTime                            @updatedAt
+  members                     ProjectMember[]
+  taskLists                   TaskList[]
   memberBillableRateOverrides ProjectMemberBillableRateOverride[]
-  expenses             Expense[]
-  recurringTemplates   RecurringExpenseTemplate[]
+  expenses                    Expense[]
+  recurringTemplates          RecurringExpenseTemplate[]
 
   @@unique([clientId, name])
   @@map("project")
@@ -408,46 +413,46 @@ model TaskList {
 }
 
 model Task {
-  id                 String          @id @default(cuid())
-  taskListId         String
-  taskList           TaskList        @relation(fields: [taskListId], references: [id], onDelete: Cascade)
-  title              String
-  description        String?
-  status             TaskStatus      @default(todo)
-  priority           TaskPriority    @default(medium)
-  deadlineDate       DateTime?       @db.Date
-  billingType        TaskBillingType @default(hourly)
-  flatFeeAmountCents Int?
+  id                        String                 @id @default(cuid())
+  taskListId                String
+  taskList                  TaskList               @relation(fields: [taskListId], references: [id], onDelete: Cascade)
+  title                     String
+  description               String?
+  status                    TaskStatus             @default(todo)
+  priority                  TaskPriority           @default(medium)
+  deadlineDate              DateTime?              @db.Date
+  billingType               TaskBillingType        @default(hourly)
+  flatFeeAmountCents        Int?
   billableRateOverrideCents Int?
-  createdByUserId    String
-  createdByUser      User            @relation("TaskCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
-  assignees          TaskAssignment[]
-  comments           TaskComment[]
-  attachments        TaskAttachment[]
-  timeLogs           TaskTimeLog[]
-  invoiceSelections  InvoiceTaskSelection[]
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
+  createdByUserId           String
+  createdByUser             User                   @relation("TaskCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  assignees                 TaskAssignment[]
+  comments                  TaskComment[]
+  attachments               TaskAttachment[]
+  timeLogs                  TaskTimeLog[]
+  invoiceSelections         InvoiceTaskSelection[]
+  createdAt                 DateTime               @default(now())
+  updatedAt                 DateTime               @updatedAt
 
   @@index([taskListId, status])
   @@map("task")
 }
 
 model TaskComment {
-  id              String   @id @default(cuid())
+  id              String           @id @default(cuid())
   taskId          String
-  task            Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  task            Task             @relation(fields: [taskId], references: [id], onDelete: Cascade)
   authorUserId    String
-  author          User     @relation("TaskCommentAuthor", fields: [authorUserId], references: [id], onDelete: Restrict)
+  author          User             @relation("TaskCommentAuthor", fields: [authorUserId], references: [id], onDelete: Restrict)
   body            String
   editedAt        DateTime?
-  isDeleted       Boolean  @default(false)
+  isDeleted       Boolean          @default(false)
   deletedAt       DateTime?
   deletedByUserId String?
-  deletedByUser   User?    @relation("TaskCommentDeletedBy", fields: [deletedByUserId], references: [id], onDelete: Restrict)
-  attachments      TaskAttachment[]
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  deletedByUser   User?            @relation("TaskCommentDeletedBy", fields: [deletedByUserId], references: [id], onDelete: Restrict)
+  attachments     TaskAttachment[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   @@index([taskId, createdAt])
   @@index([authorUserId])
@@ -457,11 +462,11 @@ model TaskComment {
 
 model TaskAssignment {
   id        String   @id @default(cuid())
-  taskId     String
-  userId     String
-  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt  DateTime @default(now())
+  taskId    String
+  userId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
 
   @@unique([taskId, userId])
   @@index([userId])
@@ -469,20 +474,20 @@ model TaskAssignment {
 }
 
 model TaskAttachment {
-  id                String       @id @default(cuid())
-  ownerCompanyId    String
-  ownerCompany      Company      @relation("TaskAttachmentOwnerCompany", fields: [ownerCompanyId], references: [id], onDelete: Cascade)
-  taskId            String
-  task              Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  taskCommentId     String?
-  taskComment       TaskComment? @relation(fields: [taskCommentId], references: [id], onDelete: Cascade)
-  uploadedByUserId  String
-  uploadedByUser    User         @relation("TaskAttachmentUploader", fields: [uploadedByUserId], references: [id], onDelete: Restrict)
-  originalFilename  String
-  contentType       String
-  sizeBytes         Int
-  blob              Bytes
-  createdAt         DateTime     @default(now())
+  id               String       @id @default(cuid())
+  ownerCompanyId   String
+  ownerCompany     Company      @relation("TaskAttachmentOwnerCompany", fields: [ownerCompanyId], references: [id], onDelete: Cascade)
+  taskId           String
+  task             Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskCommentId    String?
+  taskComment      TaskComment? @relation(fields: [taskCommentId], references: [id], onDelete: Cascade)
+  uploadedByUserId String
+  uploadedByUser   User         @relation("TaskAttachmentUploader", fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+  originalFilename String
+  contentType      String
+  sizeBytes        Int
+  blob             Bytes
+  createdAt        DateTime     @default(now())
 
   @@index([ownerCompanyId, createdAt])
   @@index([taskId, createdAt])
@@ -492,21 +497,21 @@ model TaskAttachment {
 }
 
 model TaskTimeLog {
-  id               String   @id @default(cuid())
-  taskId           String
-  task             Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  userId           String
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  workDate         DateTime @db.Date
-  description      String
-  durationMinutes  Int
-  startMinuteOfDay Int?
-  endMinuteOfDay   Int?
-  invoicedAt       DateTime?
-  snapshotCostRateCents Int?
+  id                        String    @id @default(cuid())
+  taskId                    String
+  task                      Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId                    String
+  user                      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workDate                  DateTime  @db.Date
+  description               String
+  durationMinutes           Int
+  startMinuteOfDay          Int?
+  endMinuteOfDay            Int?
+  invoicedAt                DateTime?
+  snapshotCostRateCents     Int?
   snapshotBillableRateCents Int?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
 
   @@index([taskId, workDate])
   @@index([userId, workDate])
@@ -514,35 +519,35 @@ model TaskTimeLog {
 }
 
 model Invoice {
-  id                    String            @id @default(cuid())
-  clientId              String
-  client                Client            @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  status                InvoiceStatus     @default(draft)
-  invoiceNumber         String?
-  issueDate             DateTime?         @db.Date
-  dueDate               DateTime?         @db.Date
-  servicePeriodFrom     DateTime?         @db.Date
-  servicePeriodTo       DateTime?         @db.Date
-  paymentMethod         PaymentMethod     @default(bank_transfer)
-  vatRateBasisPoints    Int               @default(2000)
-  netTotalCents         Int               @default(0)
-  vatTotalCents         Int               @default(0)
-  grossTotalCents       Int               @default(0)
-  paidTotalCents        Int               @default(0)
-  isStaleDraft          Boolean           @default(false)
-  lastUpdatedAt         DateTime          @default(now())
-  issuedSnapshotJson    Json?
-  issuedPdfFilename     String?
-  issuedPdfContentType  String?
-  issuedPdfBlob         Bytes?
-  voidReason            String?
-  createdByUserId       String
-  createdByUser         User              @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
-  taskSelections        InvoiceTaskSelection[]
-  customRows            InvoiceCustomRow[]
-  payments              InvoicePayment[]
-  createdAt             DateTime          @default(now())
-  updatedAt             DateTime          @updatedAt
+  id                   String                 @id @default(cuid())
+  clientId             String
+  client               Client                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  status               InvoiceStatus          @default(draft)
+  invoiceNumber        String?
+  issueDate            DateTime?              @db.Date
+  dueDate              DateTime?              @db.Date
+  servicePeriodFrom    DateTime?              @db.Date
+  servicePeriodTo      DateTime?              @db.Date
+  paymentMethod        PaymentMethod          @default(bank_transfer)
+  vatRateBasisPoints   Int                    @default(2000)
+  netTotalCents        Int                    @default(0)
+  vatTotalCents        Int                    @default(0)
+  grossTotalCents      Int                    @default(0)
+  paidTotalCents       Int                    @default(0)
+  isStaleDraft         Boolean                @default(false)
+  lastUpdatedAt        DateTime               @default(now())
+  issuedSnapshotJson   Json?
+  issuedPdfFilename    String?
+  issuedPdfContentType String?
+  issuedPdfBlob        Bytes?
+  voidReason           String?
+  createdByUserId      String
+  createdByUser        User                   @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  taskSelections       InvoiceTaskSelection[]
+  customRows           InvoiceCustomRow[]
+  payments             InvoicePayment[]
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
 
   @@index([clientId, status, createdAt])
   @@index([createdByUserId, createdAt])
@@ -550,35 +555,35 @@ model Invoice {
 }
 
 model InvoicePayment {
-  id               String        @id @default(cuid())
+  id               String             @id @default(cuid())
   invoiceId        String
-  invoice          Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  invoice          Invoice            @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
   amountCents      Int
-  paymentDate      DateTime      @db.Date
+  paymentDate      DateTime           @db.Date
   paymentMethod    PaymentMethod
   notes            String?
   recordedByUserId String
-  recordedByUser   User          @relation("InvoicePaymentRecordedBy", fields: [recordedByUserId], references: [id], onDelete: Restrict)
+  recordedByUser   User               @relation("InvoicePaymentRecordedBy", fields: [recordedByUserId], references: [id], onDelete: Restrict)
   ledgerEntry      LedgerEntry?
   statementRows    BankStatementRow[]
-  createdAt        DateTime      @default(now())
+  createdAt        DateTime           @default(now())
 
   @@index([invoiceId, paymentDate])
   @@map("invoice_payment")
 }
 
 model InvoiceTaskSelection {
-  id                           String   @id @default(cuid())
-  invoiceId                    String
-  invoice                      Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  taskId                       String
-  task                         Task     @relation(fields: [taskId], references: [id], onDelete: Restrict)
-  description                  String
-  snapshotTakenAt              DateTime @default(now())
-  hourlyUninvoicedValueCents   Int?
-  flatFeeValueCents            Int?
-  snapshotJson                 Json?
-  createdAt                    DateTime @default(now())
+  id                         String   @id @default(cuid())
+  invoiceId                  String
+  invoice                    Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  taskId                     String
+  task                       Task     @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  description                String
+  snapshotTakenAt            DateTime @default(now())
+  hourlyUninvoicedValueCents Int?
+  flatFeeValueCents          Int?
+  snapshotJson               Json?
+  createdAt                  DateTime @default(now())
 
   @@unique([invoiceId, taskId])
   @@index([taskId, createdAt])
@@ -629,14 +634,14 @@ model ProjectMemberBillableRateOverride {
 }
 
 model ExpenseCategory {
-  id         String   @id @default(cuid())
-  companyId  String
-  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  name       String
-  isActive   Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  expenses   Expense[]
+  id        String    @id @default(cuid())
+  companyId String
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name      String
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  expenses  Expense[]
 
   recurringTemplates RecurringExpenseTemplate[]
 
@@ -645,37 +650,37 @@ model ExpenseCategory {
 }
 
 model Expense {
-  id                  String          @id @default(cuid())
+  id                  String                    @id @default(cuid())
   companyId           String
-  company             Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company             Company                   @relation(fields: [companyId], references: [id], onDelete: Cascade)
   categoryId          String
-  category            ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  category            ExpenseCategory           @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   clientId            String?
-  client              Client?         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  client              Client?                   @relation(fields: [clientId], references: [id], onDelete: Restrict)
   projectId           String?
-  project             Project?        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  project             Project?                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
   description         String
   amountCents         Int
-  incurredDate        DateTime        @db.Date
-  status              ExpenseStatus   @default(unpaid)
-  paidDate            DateTime?       @db.Date
+  incurredDate        DateTime                  @db.Date
+  status              ExpenseStatus             @default(unpaid)
+  paidDate            DateTime?                 @db.Date
   paidByUserId        String?
-  paidByUser          User?           @relation("ExpensePaidBy", fields: [paidByUserId], references: [id], onDelete: Restrict)
+  paidByUser          User?                     @relation("ExpensePaidBy", fields: [paidByUserId], references: [id], onDelete: Restrict)
   paidContainerId     String?
-  paidContainer       MoneyContainer? @relation("ExpensePaidFromContainer", fields: [paidContainerId], references: [id], onDelete: SetNull)
-  ledgerEntry         LedgerEntry?    @relation("ExpenseLedgerEntry")
+  paidContainer       MoneyContainer?           @relation("ExpensePaidFromContainer", fields: [paidContainerId], references: [id], onDelete: SetNull)
+  ledgerEntry         LedgerEntry?              @relation("ExpenseLedgerEntry")
   statementRows       BankStatementRow[]
   recurringTemplateId String?
   recurringTemplate   RecurringExpenseTemplate? @relation(fields: [recurringTemplateId], references: [id], onDelete: SetNull)
-  isFromTemplate      Boolean         @default(false)
-  billableToInvoice   Boolean         @default(false)
+  isFromTemplate      Boolean                   @default(false)
+  billableToInvoice   Boolean                   @default(false)
   invoicedAt          DateTime?
   attachments         ExpenseAttachment[]
-  customRow           InvoiceCustomRow? @relation("ExpenseCustomRow")
+  customRow           InvoiceCustomRow?         @relation("ExpenseCustomRow")
   createdByUserId     String
-  createdByUser       User            @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
-  createdAt           DateTime        @default(now())
-  updatedAt           DateTime        @updatedAt
+  createdByUser       User                      @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
 
   @@index([companyId, incurredDate])
   @@index([projectId, incurredDate])
@@ -699,70 +704,201 @@ model ExpenseAttachment {
 }
 
 model RecurringExpenseTemplate {
-  id                  String             @id @default(cuid())
-  companyId           String
-  company             Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  categoryId          String
-  category            ExpenseCategory    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  clientId            String?
-  client              Client?            @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  projectId           String?
-  project             Project?           @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  description         String
-  amountCents         Int
-  frequency           RecurringFrequency
-  startDate           DateTime           @db.Date
-  endDate             DateTime?          @db.Date
-  isActive            Boolean            @default(true)
-  createdByUserId     String
-  createdByUser       User               @relation("RecurringTemplateCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
-  occurrences         Expense[]
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
+  id              String             @id @default(cuid())
+  companyId       String
+  company         Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  categoryId      String
+  category        ExpenseCategory    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  clientId        String?
+  client          Client?            @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  projectId       String?
+  project         Project?           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  description     String
+  amountCents     Int
+  frequency       RecurringFrequency
+  startDate       DateTime           @db.Date
+  endDate         DateTime?          @db.Date
+  isActive        Boolean            @default(true)
+  createdByUserId String
+  createdByUser   User               @relation("RecurringTemplateCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  occurrences     Expense[]
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
 
   @@index([companyId, isActive])
   @@map("recurring_expense_template")
 }
 
 model BankStatement {
-  id                  String        @id @default(cuid())
-  companyId           String
-  company             Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  originalFilename    String
-  contentType         String
-  sizeBytes           Int
-  fileBlob            Bytes
-  importedAt          DateTime      @default(now())
-  parsingVersion      String        @default("v1-csv")
-  parseStatus         String        @default("ok")
-  importedByUserId    String
-  importedByUser      User          @relation("BankStatementImporter", fields: [importedByUserId], references: [id], onDelete: Restrict)
-  rows                BankStatementRow[]
-  createdAt           DateTime      @default(now())
+  id               String             @id @default(cuid())
+  companyId        String
+  company          Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  originalFilename String
+  contentType      String
+  sizeBytes        Int
+  fileBlob         Bytes
+  importedAt       DateTime           @default(now())
+  parsingVersion   String             @default("v1-csv")
+  parseStatus      String             @default("ok")
+  importedByUserId String
+  importedByUser   User               @relation("BankStatementImporter", fields: [importedByUserId], references: [id], onDelete: Restrict)
+  rows             BankStatementRow[]
+  createdAt        DateTime           @default(now())
 
   @@index([companyId, importedAt])
   @@map("bank_statement")
 }
 
 model BankStatementRow {
-  id                  String                  @id @default(cuid())
-  statementId         String
-  statement           BankStatement           @relation(fields: [statementId], references: [id], onDelete: Cascade)
-  rowIndex            Int
-  transactionDate     DateTime                @db.Date
-  description         String
-  amountCents         Int
-  matchState          StatementRowMatchState  @default(unmatched)
-  invoicePaymentId    String?
-  invoicePayment      InvoicePayment?         @relation(fields: [invoicePaymentId], references: [id], onDelete: SetNull)
-  standaloneIncomeId  String?
-  standaloneIncome    StandaloneIncome?       @relation(fields: [standaloneIncomeId], references: [id], onDelete: SetNull)
-  expenseId           String?
-  expense             Expense?                @relation(fields: [expenseId], references: [id], onDelete: SetNull)
-  reviewNote          String?
-  createdAt           DateTime                @default(now())
-  updatedAt           DateTime                @updatedAt
+  id                 String                 @id @default(cuid())
+  statementId        String
+  statement          BankStatement          @relation(fields: [statementId], references: [id], onDelete: Cascade)
+  rowIndex           Int
+  transactionDate    DateTime               @db.Date
+  description        String
+  amountCents        Int
+  matchState         StatementRowMatchState @default(unmatched)
+  invoicePaymentId   String?
+  invoicePayment     InvoicePayment?        @relation(fields: [invoicePaymentId], references: [id], onDelete: SetNull)
+  standaloneIncomeId String?
+  standaloneIncome   StandaloneIncome?      @relation(fields: [standaloneIncomeId], references: [id], onDelete: SetNull)
+  expenseId          String?
+  expense            Expense?               @relation(fields: [expenseId], references: [id], onDelete: SetNull)
+  reviewNote         String?
+  courierPayout      CourierPayout?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
 
   @@index([statementId, rowIndex])
   @@map("bank_statement_row")
+}
+
+enum Courier {
+  econt
+  speedy
+}
+
+enum CodLineKind {
+  unresolved
+  shop_order
+  other
+}
+
+/// One cash-on-delivery payout from a courier: one bank credit covering one or more shipments.
+model CourierPayout {
+  id                 String              @id @default(cuid())
+  companyId          String
+  company            Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  courier            Courier
+  /// Speedy payout docId; for Econt the payout timestamp (Econt has no payout id).
+  externalRef        String
+  payoutDate         DateTime            @db.Date
+  amountCents        Int
+  /// Paid out in cash at the courier's office rather than to the bank account.
+  paidInCash         Boolean             @default(false)
+  rawJson            Json
+  statementRowId     String?             @unique
+  statementRow       BankStatementRow?   @relation(fields: [statementRowId], references: [id], onDelete: SetNull)
+  standaloneIncomeId String?             @unique
+  standaloneIncome   StandaloneIncome?   @relation(fields: [standaloneIncomeId], references: [id], onDelete: SetNull)
+  lines              CourierPayoutLine[]
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@unique([courier, externalRef])
+  @@index([companyId, payoutDate])
+  @@map("courier_payout")
+}
+
+/// One shipment inside a courier payout.
+model CourierPayoutLine {
+  id            String        @id @default(cuid())
+  payoutId      String
+  payout        CourierPayout @relation(fields: [payoutId], references: [id], onDelete: Cascade)
+  waybillNumber String
+  amountCents   Int
+  deliveryDate  DateTime?     @db.Date
+  recipient     String?
+  /// Order number the courier carries for us (Speedy ref1).
+  reference     String?
+  kind          CodLineKind   @default(unresolved)
+  note          String?
+  shopOrderId   String?
+  shopOrder     ShopOrder?    @relation(fields: [shopOrderId], references: [id], onDelete: SetNull)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@unique([payoutId, waybillNumber])
+  @@index([waybillNumber])
+  @@map("courier_payout_line")
+}
+
+/// An online shop order (inobags.com, WooCommerce) with its order document PDF.
+model ShopOrder {
+  id                 String              @id @default(cuid())
+  companyId          String
+  company            Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  externalId         Int                 @unique
+  orderNumber        String
+  orderDate          DateTime
+  status             String
+  totalCents         Int
+  paymentMethod      String
+  paymentMethodTitle String?
+  customerName       String
+  courier            Courier?
+  waybillNumber      String?
+  documentNumber     String?
+  pdfFilename        String?
+  pdfBlob            Bytes?
+  rawJson            Json
+  payoutLines        CourierPayoutLine[]
+  syncedAt           DateTime            @default(now())
+
+  @@index([companyId, orderDate])
+  @@index([waybillNumber])
+  @@index([orderNumber])
+  @@map("shop_order")
+}
+
+/// Monthly fiscal memory report ("съкратен отчет на ФП") from the cash register.
+model CashRegisterReport {
+  id                  String            @id @default(cuid())
+  companyId           String
+  company             Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  periodFrom          DateTime          @db.Date
+  periodTo            DateTime          @db.Date
+  deviceNumber        String
+  fiscalMemoryNumber  String
+  documentNumber      String
+  reportDate          DateTime          @db.Date
+  firstZReport        Int?
+  lastZReport         Int?
+  lastReceiptNumber   String?
+  turnoverACents      Int               @default(0)
+  vatACents           Int               @default(0)
+  turnoverBCents      Int               @default(0)
+  vatBCents           Int               @default(0)
+  turnoverVCents      Int               @default(0)
+  vatVCents           Int               @default(0)
+  turnoverGCents      Int               @default(0)
+  vatGCents           Int               @default(0)
+  totalTurnoverCents  Int
+  totalVatCents       Int
+  stornoTurnoverCents Int               @default(0)
+  stornoVatCents      Int               @default(0)
+  /// Handmade goods sold on the spot for cash; booked as cashbox income.
+  cashSalesCents      Int               @default(0)
+  standaloneIncomeId  String?           @unique
+  standaloneIncome    StandaloneIncome? @relation(fields: [standaloneIncomeId], references: [id], onDelete: SetNull)
+  notes               String?
+  attachmentFilename  String?
+  attachmentType      String?
+  attachmentBlob      Bytes?
+  createdByUserId     String
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  @@unique([companyId, periodFrom])
+  @@map("cash_register_report")
 }
