@@ -105,6 +105,13 @@
 
 		{ section: 'ОТЧЕТИ' },
 		{
+			id: 'monthly-report',
+			label: 'Месечен пакет',
+			icon: 'download',
+			href: '/monthly-report',
+			roles: ['admin', 'accountant']
+		},
+		{
 			id: 'reports-overview',
 			label: 'Обобщение',
 			icon: 'chart',
@@ -164,6 +171,7 @@
 		'/cod': 'Наложени платежи',
 		'/cash-register': 'Касов апарат',
 		'/cashflow': 'Паричен поток',
+		'/monthly-report': 'Месечен пакет',
 		'/reports/overview': 'Отчети',
 		'/reports/billing': 'Отчети',
 		'/reports/expenses': 'Отчети',

@@ -392,3 +392,26 @@ export async function generateInvoicePdf(snapshot: InvoicePdfSnapshot): Promise<
 		await page.close();
 	}
 }
+
+/** Renders a standalone HTML document to an A4 PDF with the shared browser. */
+export async function renderHtmlToPdf(html: string): Promise<Uint8Array<ArrayBuffer>> {
+	const browser = await getBrowser();
+	const page = await browser.newPage();
+	try {
+		await page.setContent(html, { waitUntil: 'networkidle0' });
+		const pdfBuffer = await page.pdf({
+			format: 'A4',
+			printBackground: true,
+			margin: { top: '14mm', bottom: '14mm', left: '12mm', right: '12mm' },
+			displayHeaderFooter: true,
+			headerTemplate: '<span></span>',
+			footerTemplate:
+				'<div style="font-size:8px; width:100%; text-align:right; padding-right:12mm; color:#666;"><span class="pageNumber"></span> / <span class="totalPages"></span></div>'
+		});
+		const result = new Uint8Array(new ArrayBuffer(pdfBuffer.length));
+		result.set(pdfBuffer);
+		return result;
+	} finally {
+		await page.close();
+	}
+}

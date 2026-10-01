@@ -277,7 +277,12 @@ export const actions: Actions = {
 		const raw = {
 			categoryId: String(formData.get('categoryId') ?? ''),
 			description: String(formData.get('description') ?? ''),
-			amountCents: String(formData.get('amountCents') ?? ''),
+			amount: String(formData.get('amount') ?? ''),
+			// The form takes euros; the schema works in cents.
+			amountCents: (() => {
+				const eur = parseFloat(String(formData.get('amount') ?? '').replace(',', '.'));
+				return Number.isFinite(eur) ? String(Math.round(eur * 100)) : '';
+			})(),
 			incurredDate: String(formData.get('incurredDate') ?? ''),
 			clientId: String(formData.get('clientId') ?? '') || undefined,
 			projectId: String(formData.get('projectId') ?? '') || undefined,

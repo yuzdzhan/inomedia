@@ -358,15 +358,16 @@
 						</div>
 
 						<div class="field">
-							<label class="label" for="create-amountCents">Сума (стотинки)</label>
+							<label class="label" for="create-amountCents">Сума (EUR)</label>
 							<input
 								id="create-amountCents"
-								name="amountCents"
+								name="amount"
 								type="number"
-								min="1"
-								placeholder="напр. 5000 = 50.00"
+								min="0.01"
+								step="0.01"
+								placeholder="напр. 50.00"
 								class="input"
-								value={createFieldValue('amountCents')}
+								value={createFieldValue('amount')}
 								required
 							/>
 							{#if createFieldError('amountCents')}<span style="font-size: 11px; color: var(--danger);">{createFieldError('amountCents')}</span>{/if}
